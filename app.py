@@ -213,28 +213,51 @@ def review_section(context):
 # V12 CURRICULUM
 # ============================================================
 def v12_curriculum():
-    st.markdown("### 🦷 V12 Curriculum")
-    st.caption("Year → Subject → Topic / Practical Area • Local data • No API required")
-
+    st.markdown("### 🦷 V12 Curriculum + Local Topic Library")
+    st.caption("Curriculum navigation plus actual stored India BDS study content. No API required.")
     year=st.selectbox("📅 Year / Part",list(V12_CURRICULUM),key="v12_year")
     subjects=V12_CURRICULUM[year]
     subject=st.selectbox("📚 Subject",subjects,key="v12_subject")
-    topics=V12_SECTIONS.get(subject,[])
-    topic=st.selectbox("📝 Topic / Practical Area",topics,key="v12_topic")
+    sections=V12_SECTIONS.get(subject,[])
+    section=st.selectbox("📝 Curriculum / Practical Area",sections,key="v12_topic")
+    st.markdown(f"### 🎯 {section}")
+    st.success(f"**{year} → {subject} → {section}**")
 
-    st.markdown(f"### 🎯 {topic}")
-    st.success(f"**{year} → {subject} → {topic}**")
+    c=local_db()
+    rows=c.execute("SELECT DISTINCT t.topic FROM topics t JOIN subjects s ON s.id=t.subject_id WHERE s.subject=? ORDER BY t.topic",(subject,)).fetchall()
+    topics=[x[0] for x in rows]
+    c.close()
 
-    st.markdown("#### Available areas")
-    for x in topics:
-        st.write(("**• "+x+"**") if x==topic else "• "+x)
+    st.markdown("### 📚 Actual local topics available")
+    if not topics:
+        st.info("No detailed topic records are stored for this subject yet.")
+    else:
+        selected=st.selectbox("Open topic",topics,key="v12_local_topic")
+        c=local_db()
+        row=c.execute("""SELECT n.title,n.content FROM notes n JOIN topics t ON t.id=n.topic_id JOIN subjects s ON s.id=t.subject_id
+            WHERE s.subject=? AND t.topic=? ORDER BY CASE WHEN n.title LIKE '%Complete Study Note%' THEN 0 ELSE 1 END,n.id LIMIT 1""",(subject,selected)).fetchone()
+        answers=c.execute("""SELECT ea.marks,ea.title,ea.content FROM exam_answers ea JOIN topics t ON t.id=ea.topic_id JOIN subjects s ON s.id=t.subject_id
+            WHERE s.subject=? AND t.topic=? ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '2-mark' THEN 3 ELSE 4 END""",(subject,selected)).fetchall()
+        c.close()
+        if row:
+            st.markdown(f"## 📖 {row[0]}")
+            st.markdown(row[1])
+        else:
+            st.info("No detailed note is stored for this topic yet.")
+        if answers:
+            st.markdown("## 📝 University Answers")
+            for marks,title,content in answers:
+                with st.expander(f"{marks} — {title}",expanded=(marks=="10-mark")):
+                    st.markdown(content)
+        else:
+            st.warning("No complete exam answer is stored for this topic yet.")
 
     with st.expander("📚 View complete V12 curriculum"):
         for y,subs in V12_CURRICULUM.items():
             st.markdown(f"### {y}")
-            for s in subs:
-                st.markdown(f"**{s}**")
-                st.caption(" • ".join(V12_SECTIONS.get(s,[])))
+            for sub in subs:
+                st.markdown(f"**{sub}**")
+                st.caption(" • ".join(V12_SECTIONS.get(sub,[])))
 
 # ============================================================
 # STUDENT PRACTICALS
@@ -307,114 +330,78 @@ def doctor_library():
 # ============================================================
 # LOCAL STUDY DATABASE — NO API
 # ============================================================
-LOCAL_DB = "study_database_India_V3.db"
+LOCAL_DB = "study_database_India_V4_COMPLETE.db"
 
 def local_db():
     return sqlite3.connect(LOCAL_DB, check_same_thread=False)
 
 def local_search(query):
+    """Search the India BDS local database, including stored exam answers."""
     if not query.strip():
         return []
-    c = local_db()
-    raw = query.strip().lower()
-    alias = c.execute(
-        "SELECT topic FROM search_aliases WHERE lower(alias)=?",
-        (raw,)
-    ).fetchone()
-    effective = alias[0] if alias else query.strip()
-    q = f"%{effective}%"
-    rows = c.execute("""
-        SELECT 'Note' AS kind, n.title AS title, n.content AS body
-        FROM notes n
+    c=local_db()
+    raw=query.strip().lower()
+    alias=c.execute("SELECT topic FROM search_aliases WHERE lower(alias)=?",(raw,)).fetchone()
+    effective=alias[0] if alias else query.strip()
+    q=f"%{effective}%"
+    rows=c.execute("""
+        SELECT 'Note',n.title,n.content FROM notes n
         WHERE n.title LIKE ? OR n.content LIKE ?
         UNION ALL
-        SELECT q.question, q.question, COALESCE(q.answer,'')
-        FROM questions q
+        SELECT 'Exam Answer — ' || ea.marks,ea.title,ea.content FROM exam_answers ea
+        WHERE ea.title LIKE ? OR ea.content LIKE ?
+        UNION ALL
+        SELECT 'Question',q.question,COALESCE(q.answer,'') FROM questions q
         WHERE q.question LIKE ? OR COALESCE(q.answer,'') LIKE ?
         UNION ALL
-        SELECT 'Viva', v.question, v.answer
-        FROM viva v
+        SELECT 'Viva',v.question,v.answer FROM viva v
         WHERE v.question LIKE ? OR v.answer LIKE ?
         UNION ALL
-        SELECT 'Curriculum Topic', t.topic, 
-               'This topic is present in the local BDS curriculum. Detailed notes can be added to this topic.'
-        FROM topics t
-        WHERE t.topic LIKE ?
-        ORDER BY title
-        LIMIT 100
-    """, (q,q,q,q,q,q,q)).fetchall()
+        SELECT 'Curriculum Topic',t.topic,
+               'This topic is present in the local BDS curriculum. Detailed local content is shown when an answer/note record exists.'
+        FROM topics t WHERE t.topic LIKE ?
+        ORDER BY title LIMIT 200
+    """,(q,q,q,q,q,q,q,q,q)).fetchall()
     c.close()
     return rows
 
 def local_study_hub(widget_key="main"):
     st.markdown("### 🔎 Local Study Search")
-    st.caption("Searches only the Pocket Dentistry local study database — no Gemini/API call.")
-    query = st.text_input("Search topic, question or keyword", placeholder="e.g. DMFT, periodontal pocket, complete denture", key=f"local_search_{widget_key}")
+    st.caption("India BDS V4 local database — no Gemini/API call. Full exam answers are included where available.")
+    query=st.text_input("Search topic, question or keyword",placeholder="e.g. Gingivitis, Ameloblastoma, DMFT",key=f"local_search_{widget_key}")
     if query.strip():
-        results = local_search(query)
+        results=local_search(query)
         st.caption(f"{len(results)} local result(s)")
         if not results:
             st.info("No local content found for this search yet.")
         for kind,title,body in results:
             with st.expander(f"📚 {kind}: {title}"):
-                st.markdown(body)
-
+                st.markdown(body or "No answer/content stored yet.")
 
 def local_question_bank(widget_key="questions"):
-    """Question-only local search. No Gemini/API call."""
     st.markdown("### 📝 Local Question Bank")
-    st.caption("India BDS question database — no Gemini/API call.")
-
-    query = st.text_input(
-        "Search question / topic",
-        placeholder="e.g. Ameloblastoma, DMFT, gingivitis",
-        key=f"question_search_{widget_key}"
-    )
-
+    st.caption("India BDS V4 question bank — local only. Exact duplicate questions are removed. Full 10/5/2-mark answers are shown when available.")
+    query=st.text_input("Search question / topic",placeholder="e.g. Gingivitis, Ameloblastoma, DMFT",key=f"question_search_{widget_key}")
     if not query.strip():
+        st.info("Search for a topic or question to open the stored answers.")
         return
-
-    c = local_db()
-    q = f"%{query.strip()}%"
-
-    rows = c.execute("""
-        SELECT
-            question,
-            COALESCE(answer,''),
-            COALESCE(question_type,''),
-            COALESCE(year,'')
-        FROM questions
-        WHERE question LIKE ?
-           OR COALESCE(answer,'') LIKE ?
-        ORDER BY id DESC
-        LIMIT 200
-    """, (q, q)).fetchall()
-
+    c=local_db(); q=f"%{query.strip()}%"
+    answer_rows=c.execute("""SELECT ea.marks,ea.title,ea.content FROM exam_answers ea
+        WHERE ea.title LIKE ? OR ea.content LIKE ?
+        ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '2-mark' THEN 3 ELSE 4 END LIMIT 100""",(q,q)).fetchall()
+    question_rows=c.execute("""SELECT question,question_type,year,COALESCE(answer,'') FROM questions
+        WHERE question LIKE ? OR COALESCE(answer,'') LIKE ? ORDER BY id DESC LIMIT 100""",(q,q)).fetchall()
     c.close()
-
-    st.caption(f"{len(rows)} question(s) found")
-
-    if not rows:
-        st.info("No question found for this search yet.")
-        return
-
-    for question, answer, qtype, year in rows:
-        label = f"📝 {question}"
-        with st.expander(label):
-            meta = []
-            if qtype:
-                meta.append(f"Type: {qtype}")
-            if year:
-                meta.append(f"Year: {year}")
-            if meta:
-                st.caption(" • ".join(meta))
-
-            if answer and answer.strip():
-                st.markdown("### Answer")
-                st.markdown(answer)
-            else:
-                st.info("Answer not available in the local database.")
-
+    st.markdown(f"#### 📚 Full stored answers: {len(answer_rows)}")
+    for marks,title,content in answer_rows:
+        with st.expander(f"📝 {marks} — {title}"):
+            st.markdown(content or "No answer stored.")
+    st.markdown(f"#### ❓ Questions: {len(question_rows)}")
+    for question,qtype,year,answer in question_rows:
+        with st.expander(f"📖 {question}"):
+            if qtype or year: st.caption(f"{qtype or 'Question'} • {year or 'Practice'}")
+            st.markdown("### Answer")
+            st.markdown(answer or "No answer stored for this question yet.")
 
 def student_library():
     """API-free student digital library backed by the local India BDS DB."""
