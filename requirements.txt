@@ -1,3 +1,1 @@
-streamlit
-google-genai
-reportlab
+pypdf>=5.0.0
