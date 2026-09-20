@@ -1,896 +1,426 @@
-import os
-import json
-import re
+
+import os, json, re, html, sqlite3, base64
 from datetime import date, datetime
 from io import BytesIO
-import base64
-import html
-import sqlite3
-import time
-
 import streamlit as st
 from google import genai
 from google.genai import types
 
-
-# ============================================================
-# POCKET DENTISTRY & MEDICAL HUB
-# ============================================================
-
-st.set_page_config(
-    page_title="Pocket Dentistry",
-    page_icon="🦷",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title="Pocket Dentistry", page_icon="🦷", layout="centered", initial_sidebar_state="collapsed")
 
 DAILY_ANALYSIS_LIMIT = 3
 MODEL_NAME = "gemini-3.6-flash"
 
+# ============================================================
+# V12 CURRICULUM — LOCAL / API-FREE
+# ============================================================
+V12_CURRICULUM = {'First Year': ['Dental Anatomy & Dental Histology', 'Head & Neck Anatomy'], 'Second Year': ['General Pathology', 'General Microbiology', 'Pharmacology'], 'Third Year': ['Oral Pathology', 'General Medicine', 'General Surgery'], 'Final Year / Part I': ['Oral Medicine & Radiology', 'Periodontics', 'Public Health Dentistry', 'Orthodontics'], 'Final Year / Part II': ['Oral & Maxillofacial Surgery', 'Pedodontics', 'Prosthodontics', 'Conservative Dentistry & Endodontics']}
+V12_SECTIONS = {'Dental Anatomy & Dental Histology': ['Theory', 'Histology Slides', 'Tooth Carving', 'Spotters', 'MCQs', 'Practical Exam'], 'Head & Neck Anatomy': ['Histology', 'Dissection', 'Specimen Demonstration', 'Spotters', 'MCQs', 'Practical Exam'], 'General Pathology': ['Lecture Demonstrations', 'Histopathology Slides', 'Specimens', 'Student Practicals', 'Spotters', 'MCQs', 'Practical Exam'], 'General Microbiology': ['Organisms', 'Practical Slides', 'Culture Media', 'Animals', 'Instruments', 'Spotters', 'MCQs', 'Practical Exam'], 'Pharmacology': ['Dispensing Pharmacy', 'Dosage Forms', 'Prescription Writing', 'Dental Prescriptions', 'Spotters', 'MCQs', 'Practical Exam'], 'Oral Pathology': ['Hard Tissue Anomalies', 'Gross Specimens', 'Histopathology', 'Forensic Odontology', 'Spotters', 'MCQs', 'University Exam'], 'General Medicine': ['Theory', 'Clinical Training', 'Clinical Examination', 'MCQs', 'University Exam'], 'General Surgery': ['Theory', 'Clinical Training', 'Clinical Examination', 'MCQs', 'University Exam'], 'Oral Medicine & Radiology': ['Oral Medicine', 'Radiology', 'Clinical Training', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam'], 'Periodontics': ['Theory', 'Clinical Tutorials', 'Demonstrations', 'Clinical Requirements', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam'], 'Public Health Dentistry': ['Public Health', 'Dental Public Health', 'Research & Statistics', 'Practice Management', 'Palliative Care', 'Field Programme', 'Preventive Dentistry', 'Spotters', 'University Exam'], 'Orthodontics': ['Third Year Theory', 'Final Year Part I Theory', 'Clinical Training', 'Desirable Exercises', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam'], 'Oral & Maxillofacial Surgery': ['Third Year Theory', 'Final Year Part I Theory', 'Final Year Part II Theory', 'Clinical Requirements', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam'], 'Pedodontics': ['Third Year Theory', 'Final Year Part I Theory', 'Final Year Part II Theory', 'Clinical Requirements', 'Assignments', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam'], 'Prosthodontics': ['Complete Denture', 'Removable Partial Prosthodontics', 'Fixed Partial Prosthodontics', 'Miscellaneous Prosthodontics', 'Clinical Requirements', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam'], 'Conservative Dentistry & Endodontics': ['Conservative Dentistry', 'Endodontics', 'Clinical Requirements', 'Spotters', 'MCQs', 'Practical Exam', 'University Exam']}
 
 # ============================================================
-# GLOBAL CSS (Vibrant, Colorful & Modern Styling)
+# STYLE
 # ============================================================
-
-st.markdown(
-    """
-    <style>
-    .block-container {
-        max-width: 900px;
-        padding-top: 2.5rem;
-        padding-bottom: 3rem;
-        background: radial-gradient(circle at top right, rgba(23,185,120,0.05), transparent 40%),
-                    radial-gradient(circle at bottom left, rgba(0,136,145,0.05), transparent 40%);
-    }
-
-    h1, h2, h3, h4, h5, h6 {
-        background: linear-gradient(90deg, #00b4d8, #17b978, #008891);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 800;
-    }
-
-    .hero-title {
-        text-align: center;
-        font-size: 3rem;
-        font-weight: 900;
-        background: linear-gradient(90deg, #ff758c, #ff7eb3, #17b978, #00b4d8);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.2rem;
-        text-shadow: 0 2px 10px rgba(23,185,120,0.2);
-    }
-
-    .hero-subtitle {
-        text-align: center;
-        font-size: 1.15rem;
-        background: linear-gradient(90deg, #00b4d8, #90e0ef);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 700;
-        margin-bottom: 2rem;
-    }
-
-    .mode-card {
-        padding: 1.5rem;
-        border-radius: 20px;
-        border: 2px solid #00acc1;
-        background: linear-gradient(135deg, rgba(0,172,193,0.15), rgba(128,222,234,0.1));
-        margin-bottom: 1rem;
-        box-shadow: 0 8px 20px rgba(0,172,193,0.2);
-        transition: transform 0.3s ease;
-    }
-    
-    .mode-card:hover {
-        transform: translateY(-3px);
-    }
-
-    .mode-card h3, .mode-card p {
-        color: #e0f7fa !important;
-    }
-
-    .safety-box {
-        padding: 1.2rem;
-        border-radius: 15px;
-        border-left: 6px solid #17b978;
-        background: linear-gradient(135deg, rgba(23,185,120,0.15), rgba(0,136,145,0.05));
-        margin-top: 1rem;
-        box-shadow: 0 4px 15px rgba(23,185,120,0.1);
-    }
-
-    .chapter-card {
-        padding: 1rem 1.2rem;
-        border-radius: 14px;
-        border: 1px solid rgba(0,180,216,0.3);
-        background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(0,180,216,0.05));
-        margin-bottom: 0.8rem;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }
-
-    div.stButton > button {
-        border-radius: 14px;
-        min-height: 3rem;
-        font-weight: 700;
-        background: linear-gradient(90deg, #0077b6, #00b4d8, #17b978);
-        color: white;
-        border: none;
-        box-shadow: 0 4px 15px rgba(0,180,216,0.3);
-        transition: all 0.3s ease;
-    }
-
-    div.stButton > button:hover {
-        background: linear-gradient(90deg, #17b978, #00b4d8, #0077b6);
-        box-shadow: 0 6px 20px rgba(23,185,120,0.4);
-        transform: translateY(-2px);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
+st.markdown("""
+<style>
+.block-container{max-width:900px;padding-top:2.2rem;padding-bottom:3rem}
+.hero-title{text-align:center;font-size:2.8rem;font-weight:900;background:linear-gradient(90deg,#ff758c,#ff7eb3,#17b978,#00b4d8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero-subtitle{text-align:center;font-weight:700;margin-bottom:1.5rem}
+.mode-card{padding:1.3rem;border-radius:18px;border:2px solid #00acc1;background:rgba(0,172,193,.08);margin-bottom:1rem}
+.chapter-card{padding:1rem;border-radius:14px;border:1px solid rgba(0,180,216,.3);margin-bottom:.7rem}
+div.stButton>button{border-radius:13px;min-height:2.8rem;font-weight:700}
+</style>
+""", unsafe_allow_html=True)
 
 # ============================================================
-# PERSISTENT DATABASE (SQLite)
+# DATABASE
 # ============================================================
-DB_FILE = "pocket_dentistry.db"
+DB_FILE="pocket_dentistry.db"
 
 def db_connect():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-    conn.execute("""CREATE TABLE IF NOT EXISTS cases (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, patient_email TEXT,
-        patient_name TEXT, case_type TEXT, image_name TEXT, report_title TEXT, report TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS reviews (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, context TEXT, rating TEXT, suggestion TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS practicals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, title TEXT, subject TEXT, description TEXT, file_name TEXT, file_type TEXT)""")
-    conn.commit()
-    return conn
+    c=sqlite3.connect(DB_FILE,check_same_thread=False)
+    c.execute("""CREATE TABLE IF NOT EXISTS cases(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT,patient_email TEXT,
+    patient_name TEXT,case_type TEXT,image_name TEXT,report_title TEXT,report TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS reviews(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT,context TEXT,rating TEXT,suggestion TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS practicals(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT,title TEXT,subject TEXT,
+    description TEXT,file_name TEXT,file_type TEXT)""")
+    c.commit()
+    return c
 
-def save_case(patient_email, patient_name, case_type, image_name, report_title, report):
-    conn = db_connect()
-    conn.execute("INSERT INTO cases(created_at,patient_email,patient_name,case_type,image_name,report_title,report) VALUES(?,?,?,?,?,?,?)",
-                 (str(datetime.now()), patient_email, patient_name, case_type, image_name, report_title, report))
-    conn.commit()
-    conn.close()
+def save_case(email,name,ctype,image,title,report):
+    c=db_connect()
+    c.execute("INSERT INTO cases(created_at,patient_email,patient_name,case_type,image_name,report_title,report) VALUES(?,?,?,?,?,?,?)",
+              (str(datetime.now()),email,name,ctype,image,title,report))
+    c.commit(); c.close()
 
-def get_cases(patient_email=""):
-    conn = db_connect()
-    if patient_email.strip():
-        rows = conn.execute("SELECT id,created_at,patient_email,patient_name,case_type,image_name,report_title,report FROM cases WHERE patient_email=? ORDER BY id DESC", (patient_email.strip(),)).fetchall()
+def get_cases(email=""):
+    c=db_connect()
+    if email.strip():
+        r=c.execute("SELECT * FROM cases WHERE patient_email=? ORDER BY id DESC",(email.strip(),)).fetchall()
     else:
-        rows = conn.execute("SELECT id,created_at,patient_email,patient_name,case_type,image_name,report_title,report FROM cases ORDER BY id DESC LIMIT 50").fetchall()
-    conn.close()
-    return rows
+        r=c.execute("SELECT * FROM cases ORDER BY id DESC LIMIT 50").fetchall()
+    c.close(); return r
 
-def save_practical_db(title, subject, description, file_name, file_type):
-    conn = db_connect()
-    conn.execute("INSERT INTO practicals(created_at,title,subject,description,file_name,file_type) VALUES(?,?,?,?,?,?)",
-                 (str(datetime.now()), title, subject, description, file_name, file_type))
-    conn.commit()
-    conn.close()
+def save_review(context,rating,suggestion):
+    c=db_connect()
+    c.execute("INSERT INTO reviews(created_at,context,rating,suggestion) VALUES(?,?,?,?)",
+              (str(datetime.now()),context,rating,suggestion))
+    c.commit(); c.close()
+
+def save_practical(title,subject,description,file_name,file_type):
+    c=db_connect()
+    c.execute("INSERT INTO practicals(created_at,title,subject,description,file_name,file_type) VALUES(?,?,?,?,?,?)",
+              (str(datetime.now()),title,subject,description,file_name,file_type))
+    c.commit(); c.close()
 
 def get_practicals():
-    conn = db_connect()
-    rows = conn.execute("SELECT id,created_at,title,subject,description,file_name,file_type FROM practicals ORDER BY id DESC").fetchall()
-    conn.close()
-    return rows
-
-def save_review_db(context, rating, suggestion):
-    conn = db_connect()
-    conn.execute("INSERT INTO reviews(created_at,context,rating,suggestion) VALUES(?,?,?,?)", (str(datetime.now()), context, rating, suggestion))
-    conn.commit()
-    conn.close()
-
+    c=db_connect()
+    r=c.execute("SELECT * FROM practicals ORDER BY id DESC").fetchall()
+    c.close(); return r
 
 # ============================================================
-# SESSION STATE
+# GEMINI
 # ============================================================
-
-DEFAULT_STATE = {
-    "mode": None,
-    "page": "home",
-    "analysis_date": str(date.today()),
-    "analysis_count": 0,
-    "last_report": "",
-    "last_image_name": "",
-    "selected_book": None,
-    "selected_subject": None,
-    "selected_chapter": None,
-    "library_search": "",
-    "library_answer": "",
-    "pyq_bank_result": "",
-}
-
-for key, value in DEFAULT_STATE.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
-
-if st.session_state.analysis_date != str(date.today()):
-    st.session_state.analysis_date = str(date.today())
-    st.session_state.analysis_count = 0
-
-
-# ============================================================
-# GEMINI CLIENT & ERROR HANDLING
-# ============================================================
-
 def get_api_key():
-    try:
-        key = st.secrets.get("GEMINI_API_KEY", "")
-    except Exception:
-        key = ""
-    return str(key or os.getenv("GEMINI_API_KEY", "")).strip()
+    try: key=st.secrets.get("GEMINI_API_KEY","")
+    except Exception: key=""
+    return str(key or os.getenv("GEMINI_API_KEY","")).strip()
 
 def get_client():
-    key = get_api_key()
-    if not key:
-        return None
-    try:
-        return genai.Client(api_key=key)
-    except Exception:
-        return None
+    key=get_api_key()
+    if not key: return None
+    try: return genai.Client(api_key=key)
+    except Exception: return None
 
-def friendly_ai_error(exc):
-    error_text = str(exc).upper()
-    if "401" in error_text or "UNAUTHENTICATED" in error_text:
-        return "🔐 **Gemini authentication failed.** Please check `GEMINI_API_KEY`."
-    if "403" in error_text or "PERMISSION_DENIED" in error_text:
-        return "🚫 **Gemini API permission denied.** Check API access."
-    if "404" in error_text or "NOT_FOUND" in error_text:
-        return f"🔎 **Gemini model `{MODEL_NAME}` was not found or is unavailable.**"
-    if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text or "QUOTA" in error_text:
-        return "⏳ **Gemini API quota or rate limit reached.** Please try again shortly."
-    if "503" in error_text or "UNAVAILABLE" in error_text:
-        return "🔄 **Gemini is temporarily unavailable.**"
-    return "⚠️ **AI service error.** Please try again."
-
-def show_ai_error(exc, title="AI request failed"):
-    st.error(f"❌ {title}")
-    st.markdown(friendly_ai_error(exc))
-
-def image_to_part(uploaded_file):
-    data = uploaded_file.getvalue()
-    mime = uploaded_file.type or "image/png"
-    return types.Part.from_bytes(data=data, mime_type=mime)
-
-def run_image_analysis(uploaded_file, prompt):
-    client = get_client()
-    if client is None:
-        raise RuntimeError("Gemini API key not found or client could not be created.")
-    image_part = image_to_part(uploaded_file)
-    response = client.models.generate_content(model=MODEL_NAME, contents=[prompt, image_part])
-    text = getattr(response, "text", None)
-    if not text:
-        raise RuntimeError("The AI returned an empty response.")
-    return text
+def friendly_error(e):
+    t=str(e).upper()
+    if "401" in t or "UNAUTHENTICATED" in t:return "🔐 Gemini authentication failed. Check GEMINI_API_KEY."
+    if "403" in t or "PERMISSION_DENIED" in t:return "🚫 Gemini API permission denied."
+    if "404" in t or "NOT_FOUND" in t:return f"🔎 Gemini model `{MODEL_NAME}` was not found or is unavailable."
+    if "429" in t or "QUOTA" in t or "RESOURCE_EXHAUSTED" in t:return "⏳ Gemini quota/rate limit reached."
+    if "503" in t or "UNAVAILABLE" in t:return "🔄 Gemini is temporarily unavailable."
+    return "⚠️ AI service error. Please try again."
 
 def run_text_ai(prompt):
-    client = get_client()
-    if client is None:
-        raise RuntimeError("Gemini API key not found or client could not be created.")
-    response = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-    text = getattr(response, "text", None)
-    if not text:
-        raise RuntimeError("The AI returned an empty response.")
+    c=get_client()
+    if c is None: raise RuntimeError("Gemini API key not found or client could not be created.")
+    r=c.models.generate_content(model=MODEL_NAME,contents=prompt)
+    text=getattr(r,"text",None)
+    if not text: raise RuntimeError("The AI returned an empty response.")
     return text
 
+def run_image_analysis(uploaded,prompt):
+    c=get_client()
+    if c is None: raise RuntimeError("Gemini API key not found or client could not be created.")
+    part=types.Part.from_bytes(data=uploaded.getvalue(),mime_type=uploaded.type or "image/png")
+    r=c.models.generate_content(model=MODEL_NAME,contents=[prompt,part])
+    text=getattr(r,"text",None)
+    if not text: raise RuntimeError("The AI returned an empty response.")
+    return text
+
+def show_ai_error(e,title="AI request failed"):
+    st.error(f"❌ {title}")
+    st.markdown(friendly_error(e))
 
 # ============================================================
-# EXPORT, PRINT & GMAIL UTILITIES
+# EXPORT
 # ============================================================
-
-def make_report_html(title, patient, report, report_type="AI Report"):
-    safe_report = html.escape(report or "").replace("\n", "<br>")
-    safe_patient = html.escape(patient or "Not provided")
+def report_html(title,patient,report,kind="AI Report"):
     return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>{html.escape(title)}</title>
-<style>
-body{{font-family:Arial,sans-serif;max-width:850px;margin:40px auto;padding:20px;color:#17202a}}
-h1{{color:#1e3d59}} .box{{padding:15px;border:1px solid #ddd;border-radius:10px;margin:12px 0}}
-@media print{{.no-print{{display:none}}}}
-</style></head><body>
-<h1>🦷 Pocket Dentistry & Medical Hub</h1><h2>{html.escape(title)}</h2>
-<div class="box"><b>Target Subject / Patient:</b> {safe_patient}<br>
-<b>Report type:</b> {html.escape(report_type)}<br>
-<b>Date:</b> {date.today()}</div>
-<div class="box"><h3>Content</h3>{safe_report}</div>
-<button class="no-print" onclick="window.print()">🖨️ Print / Save as PDF</button>
-</body></html>"""
+<title>{html.escape(title)}</title><style>
+body{{font-family:Arial;max-width:850px;margin:40px auto;padding:20px}}
+.box{{padding:15px;border:1px solid #ddd;border-radius:10px;margin:12px 0}}
+</style></head><body><h1>🦷 Pocket Dentistry</h1>
+<h2>{html.escape(title)}</h2><div class="box"><b>Patient/Target:</b>
+{html.escape(patient or "Not provided")}<br><b>Type:</b>{html.escape(kind)}<br><b>Date:</b>{date.today()}</div>
+<div class="box">{html.escape(report or "").replace(chr(10),"<br>")}</div>
+<button onclick="window.print()">🖨️ Print / Save as PDF</button></body></html>"""
 
-def pdf_bytes(title, patient, report, report_type="AI Report"):
+def pdf_bytes(title,patient,report,kind="AI Report"):
     try:
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer
+        from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
         from reportlab.lib.enums import TA_CENTER
-        buf = BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle("PDTitle", parent=styles["Title"], alignment=TA_CENTER, fontSize=18)
-        body = ParagraphStyle("PDBody", parent=styles["BodyText"], fontSize=9.5, leading=14)
-        story = [Paragraph("Pocket Dentistry", title_style), Spacer(1, 12), Paragraph(html.escape(title or "Report"), styles["Heading2"]),
-               Paragraph(f"<b>Target Subject/Patient:</b> {html.escape(patient or 'Not provided')}<br/><b>Report type:</b> {html.escape(report_type)}<br/><b>Date:</b> {date.today()}", body), Spacer(1, 14)]
-        for line in (report or "").split("\n"):
-            if line.strip(): story += [Paragraph(html.escape(line.strip()), body), Spacer(1, 4)]
-        doc.build(story)
-        return buf.getvalue()
-    except Exception:
-        return None
+        b=BytesIO(); d=SimpleDocTemplate(b,pagesize=A4,rightMargin=40,leftMargin=40,topMargin=40,bottomMargin=40)
+        s=getSampleStyleSheet(); title_s=ParagraphStyle("t",parent=s["Title"],alignment=TA_CENTER,fontSize=18)
+        body=ParagraphStyle("b",parent=s["BodyText"],fontSize=9.5,leading=14)
+        story=[Paragraph("Pocket Dentistry",title_s),Spacer(1,12),Paragraph(html.escape(title or "Report"),s["Heading2"]),
+               Paragraph(f"<b>Target:</b> {html.escape(patient or 'Not provided')}<br/><b>Type:</b> {html.escape(kind)}<br/><b>Date:</b> {date.today()}",body),Spacer(1,12)]
+        for line in (report or "").splitlines():
+            if line.strip(): story += [Paragraph(html.escape(line.strip()),body),Spacer(1,4)]
+        d.build(story); return b.getvalue()
+    except Exception:return None
 
-def show_export_controls(title, patient, report, report_type="AI Report"):
-    if not report: return
-    st.markdown("### 📄 Save / Download / Print Options")
-    doc = make_report_html(title, patient, report, report_type)
-    st.download_button("🌐 Download HTML", doc, file_name="document.html", mime="text/html", use_container_width=True)
-    pdf = pdf_bytes(title, patient, report, report_type)
-    if pdf:
-        st.download_button("📄 Download PDF", pdf, file_name="document.pdf", mime="application/pdf", use_container_width=True)
-    b64 = base64.b64encode(doc.encode()).decode()
-    st.markdown(f'<a href="data:text/html;base64,{b64}" target="_blank">🖨️ Open printable report window</a>', unsafe_allow_html=True)
+def show_export(title,patient,report,kind="AI Report"):
+    if not report:return
+    st.markdown("### 📄 Save / Download")
+    doc=report_html(title,patient,report,kind)
+    st.download_button("🌐 Download HTML",doc,"document.html","text/html",use_container_width=True)
+    p=pdf_bytes(title,patient,report,kind)
+    if p: st.download_button("📄 Download PDF",p,"document.pdf","application/pdf",use_container_width=True)
 
-def send_report_email(patient_email, subject, body):
-    import smtplib
-    from email.message import EmailMessage
-    host = st.secrets.get("SMTP_HOST", "")
-    port = int(st.secrets.get("SMTP_PORT", 587))
-    user = st.secrets.get("SMTP_USERNAME", "")
-    password = st.secrets.get("SMTP_PASSWORD", "")
-    sender = st.secrets.get("SMTP_FROM", user)
-    if not all([host, user, password, sender]): 
-        raise RuntimeError("SMTP settings not configured.")
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = patient_email
-    msg.set_content(body)
-    with smtplib.SMTP(host, port) as s:
-        s.starttls()
-        s.login(user, password)
-        s.send_message(msg)
-
-def patient_email_section(report, title="Report"):
-    with st.expander("📧 Send report to Gmail"):
-        email = st.text_input("Gmail address", key=f"mail_{title}")
-        if st.button("📨 Send", use_container_width=True, key=f"send_{title}"):
-            if not email or "@" not in email: st.warning("Enter valid email.")
-            else:
-                try:
-                    send_report_email(email, title, report)
-                    st.success("Sent successfully!")
-                except Exception as e:
-                    st.error(f"Failed: {friendly_ai_error(e)}")
-
-def review_section(context="report"):
+def review_section(context):
     st.markdown("### ⭐ Review & Suggestions")
-    rating = st.radio("How useful was this?", ["👍 Useful", "😐 Partly useful", "👎 Not useful"], horizontal=True, key=f"rating_{context}")
-    suggestion = st.text_area("Suggestion / improvement idea", key=f"suggestion_{context}", placeholder="What should be added?")
-    if st.button("Submit review", key=f"reviewbtn_{context}", use_container_width=True):
-        save_review_db(context, rating, suggestion)
-        st.success("Thank you for your feedback!")
-
+    rating=st.radio("How useful was this?",["👍 Useful","😐 Partly useful","👎 Not useful"],horizontal=True,key=f"rating_{context}")
+    suggestion=st.text_area("Suggestion / improvement idea",key=f"suggestion_{context}")
+    if st.button("Submit review",key=f"review_{context}",use_container_width=True):
+        save_review(context,rating,suggestion); st.success("Thank you!")
 
 # ============================================================
-# STUDENT PRACTICALS & MEDIA SECTION
+# V12 CURRICULUM
 # ============================================================
+def v12_curriculum():
+    st.markdown("### 🦷 V12 Curriculum")
+    st.caption("Year → Subject → Topic / Practical Area • Local data • No API required")
 
-def student_practicals_section():
-    st.markdown("### 🧪 Student Practicals & Lab Demonstration Hub")
-    st.caption("Upload your practical notes, animated clinical procedures, instructional videos, and step-by-step images.")
+    year=st.selectbox("📅 Year / Part",list(V12_CURRICULUM),key="v12_year")
+    subjects=V12_CURRICULUM[year]
+    subject=st.selectbox("📚 Subject",subjects,key="v12_subject")
+    topics=V12_SECTIONS.get(subject,[])
+    topic=st.selectbox("📝 Topic / Practical Area",topics,key="v12_topic")
 
-    with st.form("practical_upload_form"):
-        p_title = st.text_input("Practical Title / Procedure Name", placeholder="e.g. Class II Cavity Preparation, Mandibular Block Technique")
-        p_subject = st.selectbox("Subject", [
-            "Conservative Dentistry & Endodontics", "Prosthodontics", "Orthodontics", 
-            "Periodontics", "Pedodontics", "Oral Surgery", "Oral Pathology", "General Human Anatomy"
-        ])
-        p_desc = st.text_area("Description / Practical Steps / Notes", placeholder="Write your clinical steps, observations, or instructions here...")
-        
-        uploaded_media = st.file_uploader(
-            "📤 Upload Animated Photos, Videos or Images (MP4, GIF, PNG, JPG, WEBP)", 
-            type=["mp4", "mov", "gif", "png", "jpg", "jpeg", "webp"]
-        )
-        
-        submit_btn = st.form_submit_button("💾 Save Practical Record & Media", use_container_width=True)
-        
-        if submit_btn:
-            if not p_title.strip():
-                st.warning("Please enter a practical title.")
+    st.markdown(f"### 🎯 {topic}")
+    st.success(f"**{year} → {subject} → {topic}**")
+
+    st.markdown("#### Available areas")
+    for x in topics:
+        st.write(("**• "+x+"**") if x==topic else "• "+x)
+
+    with st.expander("📚 View complete V12 curriculum"):
+        for y,subs in V12_CURRICULUM.items():
+            st.markdown(f"### {y}")
+            for s in subs:
+                st.markdown(f"**{s}**")
+                st.caption(" • ".join(V12_SECTIONS.get(s,[])))
+
+# ============================================================
+# STUDENT PRACTICALS
+# ============================================================
+def practicals():
+    st.markdown("### 🧪 Student Practicals & Lab Hub")
+    with st.form("practical_form"):
+        title=st.text_input("Practical title")
+        subject=st.selectbox("Subject",list(V12_SECTIONS))
+        desc=st.text_area("Steps / notes")
+        f=st.file_uploader("Upload image / GIF / video",type=["mp4","mov","gif","png","jpg","jpeg","webp"])
+        submit=st.form_submit_button("💾 Save",use_container_width=True)
+        if submit:
+            if not title.strip(): st.warning("Enter a title.")
             else:
-                file_name = uploaded_media.name if uploaded_media else "No Media"
-                file_type = uploaded_media.type if uploaded_media else "None"
-                
-                if uploaded_media:
-                    os.makedirs("uploads/practicals", exist_ok=True)
-                    file_path = os.path.join("uploads/practicals", uploaded_media.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_media.getbuffer())
+                fname=f.name if f else "No Media"; ftype=f.type if f else "None"
+                if f:
+                    os.makedirs("uploads/practicals",exist_ok=True)
+                    with open(os.path.join("uploads/practicals",f.name),"wb") as out: out.write(f.getbuffer())
+                save_practical(title,subject,desc,fname,ftype); st.success("Saved!")
 
-                save_practical_db(p_title, p_subject, p_desc, file_name, file_type)
-                st.success(f"Practical record '{p_title}' saved successfully!")
-
-    st.markdown("---")
-    st.markdown("### 📂 Saved Practical Records & Media Gallery")
-    
-    saved_records = get_practicals()
-    if not saved_records:
-        st.info("No practical records uploaded yet. Use the form above to add notes, photos, or videos.")
-    else:
-        for rec in saved_records:
-            rid, created, title, subject, desc, fname, ftype = rec
-            with st.expander(f"📌 {title} ({subject}) — {created[:10]}"):
-                st.write(f"**Subject:** {subject}")
-                st.write(f"**Description / Notes:**")
-                st.markdown(desc or "No description provided.")
-                
-                if fname != "No Media":
-                    st.write(f"**Attached File:** {fname}")
-                    media_path = os.path.join("uploads/practicals", fname)
-                    if os.path.exists(media_path):
-                        if "video" in ftype.lower():
-                            st.video(media_path)
-                        elif "image" in ftype.lower() or "gif" in ftype.lower() or "webp" in ftype.lower():
-                            st.image(media_path, caption=title, use_container_width=True)
-
+    st.markdown("---"); st.markdown("### 📂 Saved Records")
+    for r in get_practicals():
+        _,created,title,subject,desc,fname,ftype=r
+        with st.expander(f"📌 {title} ({subject})"):
+            st.write(desc or "No notes.")
+            if fname!="No Media":
+                p=os.path.join("uploads/practicals",fname)
+                if os.path.exists(p):
+                    if "video" in ftype.lower(): st.video(p)
+                    else: st.image(p,use_container_width=True)
 
 # ============================================================
-# KUHS PREVIOUS YEAR QUESTION BANK ON SEARCHED TOPIC
+# LIBRARY
 # ============================================================
-
-def kuhs_searched_topic_pyq_bank():
-    st.markdown("### 📝 Previous Year Question Bank on Searched Topic")
-    search_topic = st.text_input("Enter topic or subject", value=st.session_state.get("library_search", "General Human Anatomy"), key="pyq_bank_topic")
-    
-    if st.button("🔨 Generate Question Bank", type="primary", use_container_width=True):
-        if not search_topic.strip():
-            st.warning("Please enter a topic.")
-        else:
-            with st.spinner("Compiling university question bank..."):
-                try:
-                    prompt = f"""
-You are Pocket Dentistry academic assistant specialized in KUHS and Medical/Dental examinations (2012–2025).
-Topic: {search_topic}
-Generate a comprehensive Previous Year Question Bank layout containing Long Essays, Short Notes, Viva Voce, and High-Yield study focus areas.
-"""
-                    res = run_text_ai(prompt)
-                    st.session_state.pyq_bank_result = res
-                except Exception as exc:
-                    show_ai_error(exc, "Question bank generation failed")
-
-    if st.session_state.pyq_bank_result:
-        st.markdown("---")
-        st.markdown(f"### 📋 KUHS Question Bank: {search_topic}")
-        st.markdown(st.session_state.pyq_bank_result)
-        show_export_controls(f"KUHS Question Bank - {search_topic}", search_topic, st.session_state.pyq_bank_result, "Question Bank")
-        patient_email_section(st.session_state.pyq_bank_result, f"Question Bank - {search_topic}")
-        review_section("pyq_bank")
-
-
-# ============================================================
-# INTRO TO DENTAL FAMILY, BASIC DENTISTRY & DENTAL CHAIR WITH GITHUB PIC
-# ============================================================
-
-def intro_dental_family():
-    st.markdown("## 🦷 Intro to Dental Family & Basic Dentistry")
-    st.write("Welcome to **Pocket Dentistry & Medical Hub** — the ultimate AI-powered platform uniting undergraduate dental students, medical trainees, and practicing clinicians.")
-    
-    st.markdown("### 📖 What is Basic Dentistry?")
-    st.write("""
-    **Basic Dentistry** encompasses the foundational sciences and clinical practices dedicated to the study, diagnosis, prevention, and treatment of diseases, disorders, and conditions of the oral cavity, maxillofacial area, and adjacent structures.
-    """)
-
-    st.markdown("### 💺 Anatomy of a Dental Chair & Unit (Parts & Functions)")
-    
-    # Custom GitHub Raw Image Link added here
-    st.image(
-        "https://raw.githubusercontent.com/USERNAME/REPOSITORY/main/images/dental_chair.jpg", 
-        caption="Dental Unit & Operator Setup Anatomy", 
-        use_container_width=True
-    )
-    
-    st.markdown("""
-    A standard dental unit is the core equipment used by dental professionals. Below are its primary components and their parts:
-
-    * **1. Patient Chair (Dental Chair):**
-      * **Headrest:** Supports the patient's head and neck, adjustable for various angles.
-      * **Backrest:** Supports the patient's back; can be reclined horizontally or vertically.
-      * **Seat & Armrests:** Provides patient seating comfort; armrests rotate or lower for easy entry/exit.
-    
-    * **2. Delivery System (Doctor's Console):**
-      * **Handpiece Tubings:** Connects high-speed and low-speed handpieces (turbines, micromotors).
-      * **Three-Way Syringe (Water/Air/Spray):** Used for washing, drying, or cooling the surgical site.
-      * **Control Panel:** Buttons to control chair movements, operating light, and cup filler.
-    
-    * **3. Assistant's Instrumentation:**
-      * **Saliva Ejector:** Low-volume suction for continuous removal of saliva.
-      * **High-Volume Evacuator (HVE):** Powerful suction to remove debris, water, and blood.
-      * **Curing Light:** Used to polymerize (cure) light-cured composite resin fillings.
-    
-    * **4. Operating Light (Dental Light):**
-      * Provides focused, shadow-free illumination of the oral cavity.
-    
-    * **5. Cuspidor (Spittoon) & Water Unit:**
-      * **Spittoon Bowl:** Ceramic or glass bowl where the patient rinses and spits.
-      * **Cup Filler:** Automated dispenser for rinsing water.
-    
-    * **6. Foot Control (Foot Pedal / Rheostat):**
-      * Controls the speed and operation of dental handpieces and water spray hands-free.
-    """)
-    
-    st.markdown("### 🌟 Comprehensive Branches of Dentistry (Specialties)")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("""
-        1. **Conservative Dentistry & Endodontics** (Restorations & RCT)
-        2. **Periodontics** (Gums & Supporting Structures)
-        3. **Orthodontics** (Braces & Malocclusion Correction)
-        4. **Prosthodontics** (Crowns, Bridges, Dentures & Implants)
-        5. **Oral & Maxillofacial Surgery** (Extractions & Jaw Surgery)
-        """)
-    with col2:
-        st.markdown("""
-        6. **Oral Medicine & Radiology** (Mucosal Diseases & X-Rays)
-        7. **Pediatric Dentistry** (Child Dental Care)
-        8. **Oral Pathology** (Biopsy & Disease Identification)
-        9. **Public Health Dentistry** (Community Programs & Indices)
-        10. **Dental Materials Science** (Biomaterials Study)
-        """)
-
-    st.markdown("---")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("### 🎓 Student Hub")
-        st.write("• Practical records, animated photos & videos upload\n• KUHS exam preparation & question banks\n• Digital library & topic tutor")
-        if st.button("Enter Student Mode", use_container_width=True, key="intro_student_btn"):
-            st.session_state.mode = "student"
-            st.session_state.page = "student"
-            st.rerun()
-    with c2:
-        st.markdown("### 🩺 Doctor Hub")
-        st.write("• Radiographic AI with scale calibration\n• Soft-tissue professional clinical reasoning workflow\n• Patient history & secure Gmail reporting")
-        if st.button("Enter Doctor Mode", use_container_width=True, key="intro_doctor_btn"):
-            st.session_state.mode = "doctor"
-            st.rerun()
-
-
-# ============================================================
-# COMPREHENSIVE TEXTBOOK LIBRARY
-# ============================================================
-
-TEXTBOOK_LIBRARY = {
-    "General Human Anatomy": {
-        "BD Chaurasia's Human Anatomy (Vol 1-3)": ["General Anatomy & Introduction", "Upper Limb and Thorax", "Abdomen and Pelvis", "Head, Neck and Brain", "Lower Limb", "Embryology & General Histology", "Osteology"]
-    },
-    "General Human Physiology": {
-        "Guyton and Hall Textbook of Medical Physiology": ["General Physiology & Cell Physiology", "Nerve and Muscle", "Heart and Circulation", "The Body Fluids and Kidneys", "Respiration", "Nervous System", "Gastrointestinal Physiology", "Endocrinology"]
-    },
-    "Biochemistry": {
-        "Vasudevan Textbook of Biochemistry": ["Carbohydrate Metabolism", "Lipid Metabolism", "Amino Acids", "Enzymes", "Vitamins", "Clinical Biochemistry"]
-    },
-    "General Pathology": {
-        "Robbins & Cotran Pathologic Basis of Disease": ["Cell Injury", "Inflammation and Repair", "Hemodynamics", "Neoplasia", "Genetic Diseases"]
-    },
-    "Microbiology": {
-        "Ananthanarayan and Paniker's Textbook of Microbiology": ["General Microbiology", "Bacteriology", "Immunology", "Virology", "Mycology"]
-    },
-    "General Pharmacology": {
-        "KD Tripathi Essentials of Medical Pharmacology": ["Pharmacokinetics", "Autonomic Nervous System", "Cardiovascular Drugs", "CNS Drugs", "Chemotherapy"]
-    },
-    "General Medicine": {
-        "Davidson's Principles and Practice of Medicine": ["Cardiovascular Disease", "Respiratory Disease", "Endocrine Disease", "Gastrointestinal Disease", "Neurological Disease"]
-    },
-    "General Surgery": {
-        "Bailey & Love's Short Practice of Surgery": ["Wounds and Scars", "Burns", "Surgical Infection", "Head and Neck Surgery", "Abdominal Surgery"]
-    },
-    "Oral Pathology": {
-        "Shafer's Textbook of Oral Pathology": ["Developmental Disturbances", "Dental Caries", "Pulp Diseases", "Periodontal Diseases", "Cysts", "Odontogenic Tumors"]
-    },
-    "Oral Medicine & Radiology": {
-        "Burket's Oral Medicine": ["Patient Evaluation", "Oral Mucosal Diseases", "Ulcers", "White Lesions", "Salivary Gland Disorders"]
-    },
-    "Periodontics": {
-        "Carranza's Clinical Periodontology": ["Periodontal Anatomy", "Gingivitis", "Periodontitis", "Scaling and Root Planing", "Periodontal Surgery"]
-    },
-    "Conservative Dentistry & Endodontics": {
-        "Cohen's Pathways of the Pulp": ["Pulp Biology", "Diagnosis", "Root Canal Anatomy", "Cleaning and Shaping", "Obturation"]
-    },
-    "Prosthodontics": {
-        "Nallaswamy - Textbook of Prosthodontics": ["Complete Dentures", "Impression Making", "Jaw Relations", "Removable Partial Dentures", "Fixed Prosthodontics"]
-    },
-    "Orthodontics": {
-        "Proffit - Contemporary Orthodontics": ["Growth and Development", "Malocclusion", "Diagnosis", "Fixed Appliances", "Retention"]
-    },
-    "Pedodontics": {
-        "Nikhil Marwah - Textbook of Pediatric Dentistry": ["Preventive Dentistry", "Dental Caries", "Pulp Therapy", "Space Maintainers", "Behavior Management"]
-    },
-    "Public Health Dentistry": {
-        "Soben Peter - Essentials of Preventive and Community Dentistry": ["Epidemiology", "Biostatistics", "Indices (DMFT, OHI-S, CPITN)", "Preventive Dentistry"]
-    },
-    "Dental Materials": {
-        "Phillips' Science of Dental Materials": ["Physical Properties", "Impression Materials", "Gypsum Products", "Resin Composites", "Cements"]
-    },
-    "Oral Surgery": {
-        "Malamed's Handbook of Local Anesthesia": ["Local Anesthetic Drugs", "Maxillary Anesthesia", "Mandibular Anesthesia", "Complications"]
-    }
+TEXTBOOK_LIBRARY={
+"General Human Anatomy":{"BD Chaurasia's Human Anatomy (Vol 1-3)":["General Anatomy & Introduction","Upper Limb and Thorax","Abdomen and Pelvis","Head, Neck and Brain","Lower Limb","Embryology & General Histology","Osteology"]},
+"General Human Physiology":{"Guyton and Hall Textbook of Medical Physiology":["General Physiology & Cell Physiology","Nerve and Muscle","Heart and Circulation","The Body Fluids and Kidneys","Respiration","Nervous System","Gastrointestinal Physiology","Endocrinology"]},
+"General Pathology":{"Robbins & Cotran Pathologic Basis of Disease":["Cell Injury","Inflammation and Repair","Hemodynamics","Neoplasia","Genetic Diseases"]},
+"Oral Pathology":{"Shafer's Textbook of Oral Pathology":["Developmental Disturbances","Dental Caries","Pulp Diseases","Periodontal Diseases","Cysts","Odontogenic Tumors"]},
+"Oral Medicine & Radiology":{"Burket's Oral Medicine":["Patient Evaluation","Oral Mucosal Diseases","Ulcers","White Lesions","Salivary Gland Disorders"]},
+"Periodontics":{"Carranza's Clinical Periodontology":["Periodontal Anatomy","Gingivitis","Periodontitis","Scaling and Root Planing","Periodontal Surgery"]},
+"Conservative Dentistry & Endodontics":{"Cohen's Pathways of the Pulp":["Pulp Biology","Diagnosis","Root Canal Anatomy","Cleaning and Shaping","Obturation"]},
+"Prosthodontics":{"Nallaswamy - Textbook of Prosthodontics":["Complete Dentures","Impression Making","Jaw Relations","Removable Partial Dentures","Fixed Prosthodontics"]},
+"Orthodontics":{"Proffit - Contemporary Orthodontics":["Growth and Development","Malocclusion","Diagnosis","Fixed Appliances","Retention"]},
+"Pedodontics":{"Nikhil Marwah - Textbook of Pediatric Dentistry":["Preventive Dentistry","Dental Caries","Pulp Therapy","Space Maintainers","Behavior Management"]},
+"Public Health Dentistry":{"Soben Peter - Essentials of Preventive and Community Dentistry":["Epidemiology","Biostatistics","Indices (DMFT, OHI-S, CPITN)","Preventive Dentistry"]},
+"General Medicine":{"Davidson's Principles and Practice of Medicine":["Cardiovascular Disease","Respiratory Disease","Endocrine Disease","Gastrointestinal Disease","Neurological Disease"]},
+"General Surgery":{"Bailey & Love's Short Practice of Surgery":["Wounds and Scars","Burns","Surgical Infection","Head and Neck Surgery","Abdominal Surgery"]}
 }
 
-REFERENCE_ALIASES = {
-    "anatomy": "General Human Anatomy", "physiology": "General Human Physiology", "biochemistry": "Biochemistry",
-    "pathology": "General Pathology", "microbiology": "Microbiology", "pharmacology": "General Pharmacology",
-    "medicine": "General Medicine", "surgery": "General Surgery", "caries": "Conservative Dentistry & Endodontics",
-    "rct": "Conservative Dentistry & Endodontics", "gum disease": "Periodontics", "periodontal": "Periodontics",
-    "cpitn": "Public Health Dentistry", "opg": "Oral Medicine & Radiology", "iopa": "Oral Medicine & Radiology", 
-    "ceph": "Orthodontics", "pedo": "Pedodontics", "prostho": "Prosthodontics", "ulcer": "Oral Medicine & Radiology"
-}
-
-CEPH_ANALYSES = [
-    "Steiner Analysis", "Downs Analysis", "McNamara Analysis",
-    "Tweed Analysis", "Wits Appraisal", "Jarabak Analysis",
-    "Soft Tissue Profile Analysis", "Combined / All Analyses"
-]
-
-def find_subject(search_text):
-    if not search_text: return "General Human Anatomy"
-    search = search_text.strip().lower()
-    if search in REFERENCE_ALIASES: return REFERENCE_ALIASES[search]
-    for alias, subject in REFERENCE_ALIASES.items():
-        if alias in search: return subject
-    for subject in TEXTBOOK_LIBRARY:
-        if subject.lower() in search: return subject
-    return "General Human Anatomy"
-
-def find_relevant_chapters(search_text, subject):
-    results = []
-    if not search_text: return results
-    query = search_text.lower().strip()
-    books = TEXTBOOK_LIBRARY.get(subject, {})
-    for book, chapters in books.items():
-        for chapter in chapters:
-            if query in chapter.lower():
-                results.append((book, chapter))
-    return results
-
-def textbook_library():
-    st.markdown("### 📚 Comprehensive Medical & Dental Digital Library")
-    search = st.text_input("🔎 Search topic", placeholder="Try: Anatomy, Physiology, Pathology, Surgery, Caries...", key="digital_library_search")
-    st.session_state.library_search = search
-    
-    default_subject = find_subject(search)
-    subjects = list(TEXTBOOK_LIBRARY.keys())
-    default_index = subjects.index(default_subject) if default_subject in subjects else 0
-    selected_subject = st.selectbox("📚 Select subject", subjects, index=default_index, key="digital_library_subject")
-    books = TEXTBOOK_LIBRARY[selected_subject]
-
-    if search.strip():
-        st.markdown(f"#### 🔍 Search results for: **{search}**")
-        relevant = find_relevant_chapters(search, selected_subject)
-        if relevant:
-            for book, chapter in relevant[:10]:
-                st.markdown(f'<div class="chapter-card">📑 <b>{chapter}</b><br><small>📕 {book}</small></div>', unsafe_allow_html=True)
-
-    st.markdown("#### 📕 Available Textbooks")
-    selected_book = st.selectbox("Select textbook", list(books.keys()), key="digital_library_book")
-    chapters = books[selected_book]
-    selected_chapter = st.selectbox("Choose chapter", ["Select a chapter"] + chapters, key=f"chapter_{selected_book}")
-
-    if selected_chapter != "Select a chapter":
-        st.success(f"Selected: {selected_chapter}")
-        question = st.text_area("What do you want to understand?", key=f"question_{selected_book}_{selected_chapter}")
-        if st.button("🤖 Ask the Library", type="primary", use_container_width=True) and question.strip():
-            with st.spinner("Preparing academic explanation..."):
-                try:
-                    prompt = f"Subject: {selected_subject}\nTextbook: {selected_book}\nChapter: {selected_chapter}\nQuestion: {question}\nProvide an academic explanation."
-                    st.session_state.library_answer = run_text_ai(prompt)
-                except Exception as exc:
-                    show_ai_error(exc, "Failed")
-
-        if st.session_state.library_answer:
-            st.markdown("---")
-            st.markdown("### 📚 Explanation")
-            st.markdown(st.session_state.library_answer)
-            show_export_controls(f"Explanation - {selected_chapter}", selected_subject, st.session_state.library_answer, "Explanation")
-            review_section("library")
-
+def library():
+    st.markdown("### 📚 Digital Library")
+    subjects=list(TEXTBOOK_LIBRARY)
+    subject=st.selectbox("Subject",subjects)
+    book=st.selectbox("Textbook",list(TEXTBOOK_LIBRARY[subject]))
+    chapter=st.selectbox("Chapter",TEXTBOOK_LIBRARY[subject][book])
+    q=st.text_area("What do you want to understand?")
+    if st.button("🤖 Ask the Library",type="primary",use_container_width=True) and q.strip():
+        try:
+            with st.spinner("Preparing explanation..."):
+                ans=run_text_ai(f"Subject: {subject}\nTextbook: {book}\nChapter: {chapter}\nQuestion: {q}\nGive an academic dental/medical explanation. Do not invent citations.")
+            st.markdown(ans); show_export(f"Explanation - {chapter}",subject,ans,"Explanation")
+        except Exception as e: show_ai_error(e)
 
 # ============================================================
-# RADIOGRAPH & SOFT TISSUE
+# AI TUTOR / PYQ
 # ============================================================
-
-COMMON_SAFETY_RULES = """
-You are Pocket Dentistry & Medical Hub, an AI-assisted clinical decision-support system.
-CORE SAFETY PRINCIPLE: Do good for the patient and never cause harm.
-- Analyze only information provided.
-- Never invent radiographic findings or tooth numbers.
-- Clearly state uncertainty. Do not provide a definitive diagnosis.
-"""
-
-RADIOGRAPH_PROMPTS = {
-    "IOPA": COMMON_SAFETY_RULES + "\nAnalyze IOPA radiograph for image quality, caries, restorations, bone levels, and periapical status.",
-    "OPG": COMMON_SAFETY_RULES + "\nAnalyze OPG panoramic radiograph for dentition, missing/impacted teeth, bone levels, sinuses, and condyles.",
-    "Bitewing": COMMON_SAFETY_RULES + "\nAnalyze bitewing radiograph for interproximal caries, restorations, and alveolar crest levels.",
-    "Occlusal": COMMON_SAFETY_RULES + "\nAnalyze occlusal radiograph for teeth, development, impacted teeth, and jaw structures.",
-    "Facial Radiograph": COMMON_SAFETY_RULES + "\nAnalyze facial radiograph for skeletal alignment, continuity, and obvious fracture findings.",
-}
-
-def radiograph_analyzer():
-    st.markdown("### 🩻 AI Radiographic Assessment")
-    remaining = DAILY_ANALYSIS_LIMIT - st.session_state.analysis_count
-    st.caption(f"AI analyses remaining today: {remaining}/{DAILY_ANALYSIS_LIMIT}")
-    
-    rtype = st.selectbox("Select radiograph type", list(RADIOGRAPH_PROMPTS.keys()) + ["Lateral Cephalogram (Ceph)"])
-    ceph = st.selectbox("Cephalometric Analysis Type", CEPH_ANALYSES) if rtype == "Lateral Cephalogram (Ceph)" else ""
-
-    st.markdown("#### 📏 Scale Calibration Settings")
-    calibration_mode = st.radio("Select Scale Calibration Mode", ["🤖 Auto-Calculate / AI Estimation", "✏️ Enter Known Calibration Scale (mm/pixel)"])
-    scale_val = st.text_input("Enter known scale value", value="1.0 mm/pixel") if "Enter" in calibration_mode else "Auto-estimated"
-
-    uploaded = st.file_uploader("📤 Upload dental radiograph", type=["png", "jpg", "jpeg", "webp"])
-    if uploaded: st.image(uploaded, caption="Uploaded radiograph", use_container_width=True)
-
-    patient_name = st.text_input("Patient / Case identifier", key="xray_patient_name")
-    patient_email = st.text_input("Patient Gmail / email (optional)", key="xray_patient_email", placeholder="patient@gmail.com")
-
-    if st.button("🔍 Analyze X-ray", type="primary", use_container_width=True, disabled=st.session_state.analysis_count >= DAILY_ANALYSIS_LIMIT):
-        if uploaded is None:
-            st.warning("Please upload a radiograph first.")
-            return
-        with st.spinner("Analyzing radiograph..."):
-            try:
-                prompt = COMMON_SAFETY_RULES + f"\nRadiograph: {rtype}\nCeph: {ceph}\nScale: {scale_val}"
-                report = run_image_analysis(uploaded, prompt)
-                st.session_state.analysis_count += 1
-                st.session_state.last_report = report
-                st.session_state.last_image_name = uploaded.name
-                
-                save_case(patient_email, patient_name, rtype, uploaded.name, f"{rtype} Assessment", report)
-
-                st.success("Analysis completed.")
-                st.markdown("### 📋 AI Assessment Report")
-                st.markdown(report)
-                show_export_controls(f"{rtype} Assessment", patient_name, report, "Radiographic AI")
-                patient_email_section(report, f"{rtype} Report")
-                review_section("radiograph")
-            except Exception as exc:
-                show_ai_error(exc, "Radiographic AI analysis failed")
-
-def soft_tissue_section():
-    st.markdown("### 👄 Advanced Soft-Tissue Clinical Reasoning & Upload")
-    st.caption("Upload clinical photographs of oral mucosal lesions for professional reasoning support.")
-    
-    patient_name = st.text_input("Patient / Case identifier", key="soft_patient_name")
-    patient_email = st.text_input("Patient Gmail / email (optional)", key="soft_patient_email", placeholder="patient@gmail.com")
-    
-    soft_image = st.file_uploader("📷 Upload intraoral/extraoral clinical photograph", type=["png", "jpg", "jpeg", "webp"], key="soft_tissue_file_uploader")
-    if soft_image: st.image(soft_image, caption="Uploaded soft-tissue photograph", use_container_width=True)
-
-    lesion_type = st.selectbox("Primary Lesion Appearance", ["White lesion", "Red lesion", "Red-white lesion", "Ulcer", "Pigmented lesion", "Swelling / mass", "Vesicle / blister", "Other / unclear"])
-    lesion_site = st.text_input("Anatomical Location", placeholder="e.g., Left buccal mucosa")
-    lesion_duration = st.text_input("Duration & Progression", placeholder="e.g., 2 weeks")
-    lesion_pain = st.selectbox("Pain Status", ["Painless", "Mild discomfort", "Painful / Burning"])
-    lesion_scrapable = st.selectbox("Scrapability", ["Not applicable", "Scrapable", "Non-scrapable"])
-    additional_features = st.text_area("Additional Clinical Findings & History")
-
-    if st.button("🧠 Build Professional Clinical Reasoning", type="primary", use_container_width=True):
-        with st.spinner("Processing clinical reasoning..."):
-            try:
-                prompt = f"""{COMMON_SAFETY_RULES}
-Analyze this oral mucosal lesion case:
-Appearance: {lesion_type}
-Site: {lesion_site}
-Duration: {lesion_duration}
-Pain: {lesion_pain}
-Scrapability: {lesion_scrapable}
-Additional History: {additional_features}
-Provide: Problem representation, Differential diagnoses, Evidence ledger, Critical missing info, Next clinical question, Diagnostic test, Management considerations, Red flags."""
-                
-                if soft_image:
-                    report = run_image_analysis(soft_image, prompt)
-                    img_name = soft_image.name
-                else:
-                    report = run_text_ai(prompt)
-                    img_name = "None"
-
-                save_case(patient_email, patient_name, "Soft Tissue", img_name, "Soft-Tissue Clinical Reasoning", report)
-
-                st.markdown("### 📋 Clinical Decision Support Report")
-                st.markdown(report)
-                show_export_controls("Soft-Tissue Clinical Reasoning", patient_name, report, "Clinical Decision Support")
-                patient_email_section(report, "Soft-Tissue Clinical Report")
-                review_section("soft_tissue")
-            except Exception as exc:
-                show_ai_error(exc, "Soft-tissue reasoning failed")
-
-
-# ============================================================
-# STUDENT & DOCTOR MODES
-# ============================================================
-
-def student_mode():
-    show_mode_header("Student Mode", "🎓")
-    tabs = st.tabs(["📚 Learn", "📝 Exam / PYQ Bank", "🧪 Practicals & Media", "📖 Digital Library"])
-
-    with tabs[0]:
-        st.markdown("### 📚 Topic Tutor")
-        top = st.text_input("Topic", key="learn_topic")
-        if st.button("📖 Teach Me", type="primary", use_container_width=True) and top.strip():
+def student_ai():
+    topic=st.text_input("Topic",key="topic_tutor")
+    if st.button("📖 Teach Me",type="primary",use_container_width=True) and topic.strip():
+        try:
             with st.spinner("Generating notes..."):
-                try:
-                    res = run_text_ai(f"Teach topic: {top} with definition, features, and viva questions.")
-                    st.markdown(res)
-                    show_export_controls(f"Notes - {top}", top, res, "Notes")
-                except Exception as exc: show_ai_error(exc)
+                ans=run_text_ai(f"Teach {topic} for a dental student with definition, classification, features, diagnosis, management principles and viva questions.")
+            st.markdown(ans); show_export("Notes - "+topic,topic,ans,"Study Notes")
+        except Exception as e: show_ai_error(e)
 
-    with tabs[1]:
-        kuhs_searched_topic_pyq_bank()
+def pyq():
+    topic=st.text_input("Topic / Subject",key="pyq_topic")
+    if st.button("🔨 Generate Question Bank",type="primary",use_container_width=True) and topic.strip():
+        try:
+            with st.spinner("Compiling question bank..."):
+                ans=run_text_ai(f"Create a KUHS dental/medical examination question-bank layout for {topic}. Separate Long Essays, Short Notes, Viva and high-yield areas. Do not claim a question is a verified previous-year question unless evidence is provided.")
+            st.markdown(ans); show_export("KUHS Question Bank - "+topic,topic,ans,"Question Bank")
+        except Exception as e: show_ai_error(e)
 
-    with tabs[2]:
-        student_practicals_section()
+# ============================================================
+# RADIOGRAPH AI
+# ============================================================
+COMMON_SAFETY="""You are an AI-assisted dental clinical decision-support system.
+Analyze only information provided.
+Never invent findings, tooth numbers, measurements or history.
+Clearly state uncertainty and limitations.
+Do not provide a definitive diagnosis or prescribe treatment.
+"""
 
-    with tabs[3]:
-        textbook_library()
+RADIOGRAPHS=["IOPA","OPG","Bitewing","Occlusal","Facial Radiograph","Lateral Cephalogram (Ceph)"]
+CEPH=["Steiner Analysis","Downs Analysis","McNamara Analysis","Tweed Analysis","Wits Appraisal","Jarabak Analysis","Soft Tissue Profile Analysis","Combined / All Analyses"]
+
+def xray():
+    st.markdown("### 🩻 AI Radiographic Assessment")
+    remaining=DAILY_ANALYSIS_LIMIT-st.session_state.count
+    st.caption(f"AI analyses remaining today: {remaining}/{DAILY_ANALYSIS_LIMIT}")
+    rtype=st.selectbox("Radiograph type",RADIOGRAPHS)
+    ceph=st.selectbox("Cephalometric analysis",CEPH) if "Ceph" in rtype else ""
+    calibration=st.radio("Scale calibration",["🤖 Auto estimation","✏️ Enter known mm/pixel"])
+    scale=st.text_input("Known scale",value="1.0 mm/pixel") if "Enter" in calibration else "Auto-estimated"
+    f=st.file_uploader("📤 Upload radiograph",type=["png","jpg","jpeg","webp"],key="xray_file")
+    if f: st.image(f,use_container_width=True)
+    name=st.text_input("Patient / Case identifier",key="xray_name")
+    email=st.text_input("Patient email (optional)",key="xray_email")
+    if st.button("🔍 Analyze X-ray",type="primary",use_container_width=True,disabled=remaining<=0):
+        if not f: st.warning("Upload a radiograph first."); return
+        prompt=COMMON_SAFETY+f"""
+Radiograph type: {rtype}
+Cephalometric analysis: {ceph}
+Scale information: {scale}
+Assess image quality and only visible/supportable findings. For Ceph, state which landmarks/measurements are actually assessable and do not invent values.
+Return a structured educational radiographic assessment, uncertainty, and suggested next clinical step.
+"""
+        try:
+            with st.spinner("Analyzing radiograph..."):
+                ans=run_image_analysis(f,prompt)
+            st.session_state.count+=1
+            save_case(email,name,rtype,f.name,rtype+" Assessment",ans)
+            st.success("Analysis completed.")
+            st.markdown(ans); show_export(rtype+" Assessment",name,ans,"Radiographic AI")
+            review_section("radiograph")
+        except Exception as e: show_ai_error(e,"Radiographic AI analysis failed")
+
+# ============================================================
+# SOFT TISSUE
+# ============================================================
+def soft_tissue():
+    st.markdown("### 👄 Soft-Tissue Clinical Reasoning")
+    name=st.text_input("Patient / Case identifier",key="soft_name")
+    email=st.text_input("Patient email (optional)",key="soft_email")
+    image=st.file_uploader("📷 Clinical photograph",type=["png","jpg","jpeg","webp"],key="soft_image")
+    if image: st.image(image,use_container_width=True)
+    lesion=st.selectbox("Primary appearance",["White lesion","Red lesion","Red-white lesion","Ulcer","Pigmented lesion","Swelling / mass","Vesicle / blister","Other / unclear"])
+    site=st.text_input("Anatomical location")
+    duration=st.text_input("Duration / progression")
+    pain=st.selectbox("Pain",["Painless","Mild discomfort","Painful / Burning"])
+    scrapable=st.selectbox("Scrapability",["Not applicable","Scrapable","Non-scrapable"])
+    history=st.text_area("Additional history / findings")
+    if st.button("🧠 Build Clinical Reasoning",type="primary",use_container_width=True):
+        prompt=COMMON_SAFETY+f"""
+Oral mucosal case:
+Appearance: {lesion}
+Site: {site}
+Duration: {duration}
+Pain: {pain}
+Scrapability: {scrapable}
+History: {history}
+Provide problem representation, differential diagnoses, evidence ledger (supporting/opposing/unknown), missing information, ONE highest-value next clinical question, appropriate diagnostic test considerations, management categories and red flags. Do not give a definitive diagnosis.
+"""
+        try:
+            with st.spinner("Processing..."):
+                ans=run_image_analysis(image,prompt) if image else run_text_ai(prompt)
+            save_case(email,name,"Soft Tissue",image.name if image else "None","Soft-Tissue Clinical Reasoning",ans)
+            st.markdown(ans); show_export("Soft-Tissue Clinical Reasoning",name,ans,"Clinical Decision Support")
+            review_section("soft_tissue")
+        except Exception as e: show_ai_error(e,"Soft-tissue reasoning failed")
+
+# ============================================================
+# MODES
+# ============================================================
+def student_mode():
+    st.markdown("## 🎓 Student Mode")
+    if st.button("← Home",use_container_width=True): st.session_state.mode=None; st.rerun()
+    tabs=st.tabs(["📚 Learn","📝 Exam / PYQ","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
+    with tabs[0]: student_ai()
+    with tabs[1]: pyq()
+    with tabs[2]: practicals()
+    with tabs[3]: library()
+    with tabs[4]: v12_curriculum()
 
 def doctor_mode():
-    show_mode_header("Doctor Mode", "🩺")
-    tabs = st.tabs(["🩻 X-ray AI", "👄 Soft Tissue Reasoning", "📖 Clinical Library", "📜 Case History"])
-    with tabs[0]: radiograph_analyzer()
-    with tabs[1]: soft_tissue_section()
-    with tabs[2]: textbook_library()
+    st.markdown("## 🩺 Doctor Mode")
+    if st.button("← Home",use_container_width=True): st.session_state.mode=None; st.rerun()
+    tabs=st.tabs(["🩻 X-ray AI","👄 Soft Tissue","📖 Clinical Library","📜 Case History"])
+    with tabs[0]: xray()
+    with tabs[1]: soft_tissue()
+    with tabs[2]: library()
     with tabs[3]:
-        st.markdown("### 📜 Saved Patient History & Case Records")
-        search_email = st.text_input("Search patient email", key="history_email", placeholder="patient@gmail.com")
-        rows = get_cases(search_email)
-        if not rows:
-            st.info("No saved cases found.")
-        else:
-            for row in rows:
-                cid, created, email, name, ctype, img, title, report = row
-                with st.expander(f"{created} — {name or 'Case'} — {ctype or 'Report'}"):
-                    st.write(f"**Patient:** {name or 'Not provided'}")
-                    st.write(f"**Email:** {email or 'Not provided'}")
-                    st.markdown(report)
-                    show_export_controls(title or "Saved Case", name or "", report, ctype or "Saved report")
-                    if email: patient_email_section(report, f"Saved Case {cid}")
-
+        st.markdown("### 📜 Saved Case History")
+        email=st.text_input("Search patient email",key="history_email")
+        rows=get_cases(email)
+        if not rows: st.info("No saved cases found.")
+        for r in rows:
+            cid,created,pemail,name,ctype,img,title,report=r
+            with st.expander(f"{created} — {name or 'Case'} — {ctype}"):
+                st.write(f"**Patient:** {name or 'Not provided'}")
+                st.write(f"**Email:** {pemail or 'Not provided'}")
+                st.markdown(report)
+                show_export(title or "Saved Case",name or "",report,ctype or "Saved Report")
 
 # ============================================================
-# HOME & ROUTING
+# HOME
 # ============================================================
-
-def show_home():
-    st.markdown('<div class="hero-title">🦷 Pocket Dentistry & Medical Hub</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-subtitle">AI-Powered Dental & Medical Learning & Clinical Decision-Support Platform</div>', unsafe_allow_html=True)
-    
-    if st.button("🦷 Intro to Dental Family & Branches", use_container_width=True):
-        st.session_state.page = "intro"
-        st.rerun()
-
-    c1, c2 = st.columns(2)
+def home():
+    st.markdown('<div class="hero-title">🦷 Pocket Dentistry & Medical Hub</div>',unsafe_allow_html=True)
+    st.markdown('<div class="hero-subtitle">AI-Powered Dental & Medical Learning & Clinical Decision-Support Platform</div>',unsafe_allow_html=True)
+    st.info("🦷 V12 Curriculum is built into Student Mode and works locally without an API.")
+    c1,c2=st.columns(2)
     with c1:
-        st.markdown('<div class="mode-card"><h3>🎓 Student Mode</h3><p>Practicals & animated media upload, KUHS PYQs, Digital Library & Topic Tutor.</p></div>', unsafe_allow_html=True)
-        if st.button("🎓 Enter Student Mode", use_container_width=True):
-            st.session_state.mode = "student"; st.session_state.page = "student"; st.rerun()
+        st.markdown('<div class="mode-card"><h3>🎓 Student Mode</h3><p>AI Tutor • KUHS PYQ • Practicals • Digital Library • V12 Curriculum</p></div>',unsafe_allow_html=True)
+        if st.button("🎓 Enter Student Mode",use_container_width=True): st.session_state.mode="student"; st.rerun()
     with c2:
-        st.markdown('<div class="mode-card doctor"><h3>🩺 Doctor Mode</h3><p>Radiographic AI with scale calibration, soft-tissue clinical reasoning, and case history.</p></div>', unsafe_allow_html=True)
-        if st.button("🩺 Enter Doctor Mode", use_container_width=True):
-            st.session_state.mode = "doctor"; st.rerun()
+        st.markdown('<div class="mode-card"><h3>🩺 Doctor Mode</h3><p>X-ray AI • Cephalometric analysis • Soft-tissue reasoning • Case history</p></div>',unsafe_allow_html=True)
+        if st.button("🩺 Enter Doctor Mode",use_container_width=True): st.session_state.mode="doctor"; st.rerun()
 
-def show_mode_header(title, icon):
-    left, right = st.columns([1, 5])
-    with left:
-        if st.button("← Home", use_container_width=True):
-            st.session_state.mode = None; st.session_state.page = "home"; st.rerun()
-    with right: st.markdown(f"## {icon} {title}")
+if "mode" not in st.session_state: st.session_state.mode=None
+if "analysis_date" not in st.session_state: st.session_state.analysis_date=str(date.today())
+if "count" not in st.session_state: st.session_state.count=0
+if st.session_state.analysis_date!=str(date.today()):
+    st.session_state.analysis_date=str(date.today()); st.session_state.count=0
 
-def sidebar():
-    with st.sidebar:
-        st.markdown("## 🦷 Pocket Dentistry")
-        if st.button("🏠 Home", use_container_width=True):
-            st.session_state.mode = None; st.session_state.page = "home"; st.rerun()
-        if st.button("🦷 Intro to Dental Family", use_container_width=True):
-            st.session_state.page = "intro"; st.rerun()
+db_connect()
 
-sidebar()
+with st.sidebar:
+    st.markdown("## 🦷 Pocket Dentistry")
+    if st.button("🏠 Home",use_container_width=True): st.session_state.mode=None; st.rerun()
+    if st.button("🎓 Student Mode",use_container_width=True): st.session_state.mode="student"; st.rerun()
+    if st.button("🩺 Doctor Mode",use_container_width=True): st.session_state.mode="doctor"; st.rerun()
 
-if st.session_state.get("page") == "intro": intro_dental_family()
-elif st.session_state.mode is None: show_home()
-elif st.session_state.mode == "student": student_mode()
-elif st.session_state.mode == "doctor": doctor_mode()
+if st.session_state.mode=="student": student_mode()
+elif st.session_state.mode=="doctor": doctor_mode()
+else: home()
