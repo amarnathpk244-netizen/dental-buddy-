@@ -1,4 +1,3 @@
-
 import os, json, re, html, sqlite3, base64
 from datetime import date, datetime
 from io import BytesIO
@@ -33,6 +32,7 @@ div.stButton>button{border-radius:13px;min-height:2.8rem;font-weight:700}
 # DATABASE
 # ============================================================
 DB_FILE="pocket_dentistry.db"
+LOCAL_DB = "study_database_India_V6_EXAM_RULES.db"
 
 def db_connect():
     c=sqlite3.connect(DB_FILE,check_same_thread=False)
@@ -44,6 +44,19 @@ def db_connect():
     c.execute("""CREATE TABLE IF NOT EXISTS practicals(
     id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT,title TEXT,subject TEXT,
     description TEXT,file_name TEXT,file_type TEXT)""")
+    c.commit()
+    return c
+
+def local_db():
+    c = sqlite3.connect(LOCAL_DB, check_same_thread=False)
+    # Safe creation of tables if they don't exist to prevent OperationalError
+    c.execute("CREATE TABLE IF NOT EXISTS subjects(id INTEGER PRIMARY KEY, year TEXT, subject TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS topics(id INTEGER PRIMARY KEY, subject_id INTEGER, topic TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, topic_id INTEGER, title TEXT, content TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS exam_answers(id INTEGER PRIMARY KEY, topic_id INTEGER, marks TEXT, title TEXT, content TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, question TEXT, question_type TEXT, year TEXT, answer TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS viva(id INTEGER PRIMARY KEY, question TEXT, answer TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS search_aliases(id INTEGER PRIMARY KEY, alias TEXT, topic TEXT)")
     c.commit()
     return c
 
@@ -87,82 +100,47 @@ def get_api_key():
     return str(key or os.getenv("GEMINI_API_KEY","")).strip()
 
 def get_client():
-    """Gemini is loaded only for Doctor Mode AI requests."""
     try:
         from google import genai
     except ImportError:
         raise RuntimeError("google-genai is not installed. Run: pip install google-genai")
-
     key = get_api_key()
-    if not key:
-        return None
-
+    if not key: return None
     try:
         return genai.Client(api_key=key)
     except Exception:
         return None
 
-
 def run_text_ai(prompt):
     c = get_client()
-    if c is None:
-        raise RuntimeError("Gemini API key not found or client could not be created.")
-
+    if c is None: raise RuntimeError("Gemini API key not found or client could not be created.")
     r = c.models.generate_content(model=MODEL_NAME, contents=prompt)
     text = getattr(r, "text", None)
-
-    if not text:
-        raise RuntimeError("The AI returned an empty response.")
-
+    if not text: raise RuntimeError("The AI returned an empty response.")
     return text
-
 
 def run_image_analysis(uploaded, prompt):
     try:
         from google.genai import types
     except ImportError:
         raise RuntimeError("google-genai is not installed. Run: pip install google-genai")
-
     c = get_client()
-    if c is None:
-        raise RuntimeError("Gemini API key not found or client could not be created.")
-
-    part = types.Part.from_bytes(
-        data=uploaded.getvalue(),
-        mime_type=uploaded.type or "image/png",
-    )
-
-    r = c.models.generate_content(
-        model=MODEL_NAME,
-        contents=[prompt, part],
-    )
-
+    if c is None: raise RuntimeError("Gemini API key not found or client could not be created.")
+    part = types.Part.from_bytes(data=uploaded.getvalue(), mime_type=uploaded.type or "image/png")
+    r = c.models.generate_content(model=MODEL_NAME, contents=[prompt, part])
     text = getattr(r, "text", None)
-
-    if not text:
-        raise RuntimeError("The AI returned an empty response.")
-
+    if not text: raise RuntimeError("The AI returned an empty response.")
     return text
 
-
 def friendly_error(e):
-    """Convert technical AI errors into a short user-friendly message."""
     msg = str(e or "Unknown error")
-
     if "API key" in msg or "Gemini" in msg or "google-genai" in msg:
-        return (
-            "Gemini/API is not configured or could not be reached. "
-            "Student Mode does not require Gemini; this message applies only "
-            "to AI features in Doctor Mode."
-        )
-
+        return "Gemini/API is not configured or could not be reached. Student Mode does not require Gemini."
     return f"Error: {msg}"
-
 
 def show_ai_error(e, title="AI request failed"):
     st.error(f"❌ {title}")
     st.markdown(friendly_error(e))
-
 
 # ============================================================
 # EXPORT
@@ -192,10 +170,10 @@ def pdf_bytes(title,patient,report,kind="AI Report"):
         for line in (report or "").splitlines():
             if line.strip(): story += [Paragraph(html.escape(line.strip()),body),Spacer(1,4)]
         d.build(story); return b.getvalue()
-    except Exception:return None
+    except Exception: return None
 
 def show_export(title,patient,report,kind="AI Report"):
-    if not report:return
+    if not report: return
     st.markdown("### 📄 Save / Download")
     doc=report_html(title,patient,report,kind)
     st.download_button("🌐 Download HTML",doc,"document.html","text/html",use_container_width=True)
@@ -323,45 +301,40 @@ def doctor_library():
             st.markdown(ans); show_export(f"Explanation - {chapter}",subject,ans,"Explanation")
         except Exception as e: show_ai_error(e)
 
-# ============================================================
-# AI TUTOR / PYQ
-# ============================================================
-
-# ============================================================
-# LOCAL STUDY DATABASE — NO API
-# ============================================================
-LOCAL_DB = "study_database_India_V6_EXAM_RULES.db"
-
-def local_db():
-    return sqlite3.connect(LOCAL_DB, check_same_thread=False)
-
 def local_search(query):
-    """Search the India BDS local database, including stored exam answers."""
-    if not query.strip():
-        return []
+    if not query.strip(): return []
     c=local_db()
     raw=query.strip().lower()
-    alias=c.execute("SELECT topic FROM search_aliases WHERE lower(alias)=?",(raw,)).fetchone()
-    effective=alias[0] if alias else query.strip()
+    
+    # Check if search_aliases table has data before querying
+    try:
+        alias=c.execute("SELECT topic FROM search_aliases WHERE lower(alias)=?",(raw,)).fetchone()
+        effective=alias[0] if alias else query.strip()
+    except Exception:
+        effective=query.strip()
+        
     q=f"%{effective}%"
-    rows=c.execute("""
-        SELECT 'Note',n.title,n.content FROM notes n
-        WHERE n.title LIKE ? OR n.content LIKE ?
-        UNION ALL
-        SELECT 'Exam Answer — ' || ea.marks,ea.title,ea.content FROM exam_answers ea
-        WHERE ea.title LIKE ? OR ea.content LIKE ?
-        UNION ALL
-        SELECT 'Question',q.question,COALESCE(q.answer,'') FROM questions q
-        WHERE q.question LIKE ? OR COALESCE(q.answer,'') LIKE ?
-        UNION ALL
-        SELECT 'Viva',v.question,v.answer FROM viva v
-        WHERE v.question LIKE ? OR v.answer LIKE ?
-        UNION ALL
-        SELECT 'Curriculum Topic',t.topic,
-               'This topic is present in the local BDS curriculum. Detailed local content is shown when an answer/note record exists.'
-        FROM topics t WHERE t.topic LIKE ?
-        ORDER BY title LIMIT 200
-    """,(q,q,q,q,q,q,q,q,q)).fetchall()
+    try:
+        rows=c.execute("""
+            SELECT 'Note',n.title,n.content FROM notes n
+            WHERE n.title LIKE ? OR n.content LIKE ?
+            UNION ALL
+            SELECT 'Exam Answer — ' || ea.marks,ea.title,ea.content FROM exam_answers ea
+            WHERE ea.title LIKE ? OR ea.content LIKE ?
+            UNION ALL
+            SELECT 'Question',q.question,COALESCE(q.answer,'') FROM questions q
+            WHERE q.question LIKE ? OR COALESCE(q.answer,'') LIKE ?
+            UNION ALL
+            SELECT 'Viva',v.question,v.answer FROM viva v
+            WHERE v.question LIKE ? OR v.answer LIKE ?
+            UNION ALL
+            SELECT 'Curriculum Topic',t.topic,
+                   'This topic is present in the local BDS curriculum. Detailed local content is shown when an answer/note record exists.'
+            FROM topics t WHERE t.topic LIKE ?
+            ORDER BY 1 LIMIT 200
+        """,(q,q,q,q,q,q,q,q,q)).fetchall()
+    except Exception:
+        rows = []
     c.close()
     return rows
 
@@ -380,17 +353,20 @@ def local_study_hub(widget_key="main"):
 
 def local_question_bank(widget_key="questions"):
     st.markdown("### 📝 Local Question Bank")
-    st.caption("India BDS V6 question bank — local only. Exact duplicate questions are removed. Full 10/5/3/2-mark answers are shown when available. 3-mark = 70–100 words; 5-mark = 150–180 words; 10-mark = >250 words.")
+    st.caption("India BDS V6 question bank — local only. Exact duplicate questions are removed. Full 10/5/3/2-mark answers are shown when available.")
     query=st.text_input("Search question / topic",placeholder="e.g. Gingivitis, Ameloblastoma, DMFT",key=f"question_search_{widget_key}")
     if not query.strip():
         st.info("Search for a topic or question to open the stored answers.")
         return
     c=local_db(); q=f"%{query.strip()}%"
-    answer_rows=c.execute("""SELECT ea.marks,ea.title,ea.content FROM exam_answers ea
-        WHERE ea.title LIKE ? OR ea.content LIKE ?
-        ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '3-mark' THEN 3 WHEN '2-mark' THEN 4 ELSE 5 END LIMIT 100""",(q,q)).fetchall()
-    question_rows=c.execute("""SELECT question,question_type,year,COALESCE(answer,'') FROM questions
-        WHERE question LIKE ? OR COALESCE(answer,'') LIKE ? ORDER BY id DESC LIMIT 100""",(q,q)).fetchall()
+    try:
+        answer_rows=c.execute("""SELECT ea.marks,ea.title,ea.content FROM exam_answers ea
+            WHERE ea.title LIKE ? OR ea.content LIKE ?
+            ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '3-mark' THEN 3 WHEN '2-mark' THEN 4 ELSE 5 END LIMIT 100""",(q,q)).fetchall()
+        question_rows=c.execute("""SELECT question,question_type,year,COALESCE(answer,'') FROM questions
+            WHERE question LIKE ? OR COALESCE(answer,'') LIKE ? ORDER BY id DESC LIMIT 100""",(q,q)).fetchall()
+    except Exception:
+        answer_rows, question_rows = [], []
     c.close()
     st.markdown(f"#### 📚 Full stored answers: {len(answer_rows)}")
     for marks,title,content in answer_rows:
@@ -404,87 +380,30 @@ def local_question_bank(widget_key="questions"):
             st.markdown(answer or "No answer stored for this question yet.")
 
 def student_library():
-    """API-free student digital library backed by the local India BDS DB."""
     st.markdown("### 📚 Digital Library")
     st.caption("📚 Local India BDS Library — no Gemini/API call")
-
     subjects = list(TEXTBOOK_LIBRARY)
-    subject = st.selectbox(
-        "Subject",
-        subjects,
-        key="student_library_subject"
-    )
-
-    book = st.selectbox(
-        "Reference textbook",
-        list(TEXTBOOK_LIBRARY[subject]),
-        key="student_library_book"
-    )
-
-    chapter = st.selectbox(
-        "Chapter",
-        TEXTBOOK_LIBRARY[subject][book],
-        key="student_library_chapter"
-    )
-
+    subject = st.selectbox("Subject", subjects, key="student_library_subject")
+    book = st.selectbox("Reference textbook", list(TEXTBOOK_LIBRARY[subject]), key="student_library_book")
+    chapter = st.selectbox("Chapter", TEXTBOOK_LIBRARY[subject][book], key="student_library_chapter")
     st.markdown(f"### 📖 {chapter}")
-
-    # Search the actual local database instead of asking Gemini.
     results = local_search(chapter)
-
     if results:
         st.success(f"Found {len(results)} local result(s).")
         for kind, title, body in results:
             with st.expander(f"📚 {kind}: {title}"):
                 st.markdown(body)
     else:
-        st.info(
-            "This chapter is listed in the reference library, but matching "
-            "detailed local content is not available yet."
-        )
-
+        st.info("This chapter is listed in the reference library, but matching detailed local content is not available yet.")
     st.markdown("---")
     st.caption(f"Reference: {book} • {chapter}")
-
-def local_subject_browser():
-    c = local_db()
-    years = [x[0] for x in c.execute("SELECT DISTINCT year FROM subjects ORDER BY id").fetchall()]
-    year = st.selectbox("Year", years, key="local_year")
-    subjects = [x[0] for x in c.execute("SELECT subject FROM subjects WHERE year=? ORDER BY subject",(year,)).fetchall()]
-    subject = st.selectbox("Subject", subjects, key="local_subject")
-    topics = [x[0] for x in c.execute("""
-        SELECT t.topic FROM topics t JOIN subjects s ON s.id=t.subject_id
-        WHERE s.year=? AND s.subject=? ORDER BY t.topic
-    """,(year,subject)).fetchall()]
-    topic = st.selectbox("Topic", topics, key="local_topic")
-    row = c.execute("""
-        SELECT n.title,n.content FROM notes n JOIN topics t ON t.id=n.topic_id
-        JOIN subjects s ON s.id=t.subject_id
-        WHERE s.year=? AND s.subject=? AND t.topic=?
-        ORDER BY n.id LIMIT 1
-    """,(year,subject,topic)).fetchone()
-    c.close()
-
-    st.markdown(f"### 📖 {topic}")
-    if row:
-        st.markdown(f"#### {row[0]}")
-        st.markdown(row[1])
-    else:
-        st.info("This topic is in the curriculum, but detailed local notes have not been added yet.")
-
-def student_ai():
-    # Kept as a compatibility wrapper, but it is deliberately API-free.
-    local_study_hub()
-
 
 # ============================================================
 # RADIOGRAPH AI
 # ============================================================
 COMMON_SAFETY="""You are an AI-assisted dental clinical decision-support system.
-Analyze only information provided.
-Never invent findings, tooth numbers, measurements or history.
-Clearly state uncertainty and limitations.
-Do not provide a definitive diagnosis or prescribe treatment.
+Analyze only information provided. Never invent findings, tooth numbers, measurements or history.
+Clearly state uncertainty and limitations. Do not provide a definitive diagnosis or prescribe treatment.
 """
 
 RADIOGRAPHS=["IOPA","OPG","Bitewing","Occlusal","Facial Radiograph","Lateral Cephalogram (Ceph)"]
