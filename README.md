@@ -1,4 +1,5 @@
-Pocket Dentistry + 
+Pocket Dentistry 
+Included
 Existing Pocket Dentistry Student/Doctor workflow
 Gemini AI Tutor
 KUHS-style question-bank generator
