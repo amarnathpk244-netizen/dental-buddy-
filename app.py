@@ -145,6 +145,20 @@ def run_image_analysis(uploaded, prompt):
     return text
 
 
+def friendly_error(e):
+    """Convert technical AI errors into a short user-friendly message."""
+    msg = str(e or "Unknown error")
+
+    if "API key" in msg or "Gemini" in msg or "google-genai" in msg:
+        return (
+            "Gemini/API is not configured or could not be reached. "
+            "Student Mode does not require Gemini; this message applies only "
+            "to AI features in Doctor Mode."
+        )
+
+    return f"Error: {msg}"
+
+
 def show_ai_error(e, title="AI request failed"):
     st.error(f"❌ {title}")
     st.markdown(friendly_error(e))
@@ -272,8 +286,8 @@ TEXTBOOK_LIBRARY={
 "General Surgery":{"Bailey & Love's Short Practice of Surgery":["Wounds and Scars","Burns","Surgical Infection","Head and Neck Surgery","Abdominal Surgery"]}
 }
 
-def library():
-    st.markdown("### 📚 Digital Library")
+def doctor_library():
+    st.markdown("### 📚 Clinical Digital Library")
     subjects=list(TEXTBOOK_LIBRARY)
     subject=st.selectbox("Subject",subjects)
     book=st.selectbox("Textbook",list(TEXTBOOK_LIBRARY[subject]))
@@ -293,7 +307,7 @@ def library():
 # ============================================================
 # LOCAL STUDY DATABASE — NO API
 # ============================================================
-LOCAL_DB = "study_database.db"
+LOCAL_DB = "study_database_India_V3.db"
 
 def local_db():
     return sqlite3.connect(LOCAL_DB, check_same_thread=False)
@@ -344,6 +358,106 @@ def local_study_hub(widget_key="main"):
         for kind,title,body in results:
             with st.expander(f"📚 {kind}: {title}"):
                 st.markdown(body)
+
+
+def local_question_bank(widget_key="questions"):
+    """Question-only local search. No Gemini/API call."""
+    st.markdown("### 📝 Local Question Bank")
+    st.caption("India BDS question database — no Gemini/API call.")
+
+    query = st.text_input(
+        "Search question / topic",
+        placeholder="e.g. Ameloblastoma, DMFT, gingivitis",
+        key=f"question_search_{widget_key}"
+    )
+
+    if not query.strip():
+        return
+
+    c = local_db()
+    q = f"%{query.strip()}%"
+
+    rows = c.execute("""
+        SELECT
+            question,
+            COALESCE(answer,''),
+            COALESCE(question_type,''),
+            COALESCE(year,'')
+        FROM questions
+        WHERE question LIKE ?
+           OR COALESCE(answer,'') LIKE ?
+        ORDER BY id DESC
+        LIMIT 200
+    """, (q, q)).fetchall()
+
+    c.close()
+
+    st.caption(f"{len(rows)} question(s) found")
+
+    if not rows:
+        st.info("No question found for this search yet.")
+        return
+
+    for question, answer, qtype, year in rows:
+        label = f"📝 {question}"
+        with st.expander(label):
+            meta = []
+            if qtype:
+                meta.append(f"Type: {qtype}")
+            if year:
+                meta.append(f"Year: {year}")
+            if meta:
+                st.caption(" • ".join(meta))
+
+            if answer and answer.strip():
+                st.markdown("### Answer")
+                st.markdown(answer)
+            else:
+                st.info("Answer not available in the local database.")
+
+
+def student_library():
+    """API-free student digital library backed by the local India BDS DB."""
+    st.markdown("### 📚 Digital Library")
+    st.caption("📚 Local India BDS Library — no Gemini/API call")
+
+    subjects = list(TEXTBOOK_LIBRARY)
+    subject = st.selectbox(
+        "Subject",
+        subjects,
+        key="student_library_subject"
+    )
+
+    book = st.selectbox(
+        "Reference textbook",
+        list(TEXTBOOK_LIBRARY[subject]),
+        key="student_library_book"
+    )
+
+    chapter = st.selectbox(
+        "Chapter",
+        TEXTBOOK_LIBRARY[subject][book],
+        key="student_library_chapter"
+    )
+
+    st.markdown(f"### 📖 {chapter}")
+
+    # Search the actual local database instead of asking Gemini.
+    results = local_search(chapter)
+
+    if results:
+        st.success(f"Found {len(results)} local result(s).")
+        for kind, title, body in results:
+            with st.expander(f"📚 {kind}: {title}"):
+                st.markdown(body)
+    else:
+        st.info(
+            "This chapter is listed in the reference library, but matching "
+            "detailed local content is not available yet."
+        )
+
+    st.markdown("---")
+    st.caption(f"Reference: {book} • {chapter}")
 
 def local_subject_browser():
     c = local_db()
@@ -462,11 +576,9 @@ def student_mode():
     if st.button("← Home",use_container_width=True): st.session_state.mode=None; st.rerun()
     tabs=st.tabs(["🔎 Local Study","📝 Local Questions","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
     with tabs[0]: local_study_hub("study")
-    with tabs[1]:
-        st.markdown("### 📝 Local Question Bank")
-        local_study_hub("questions")
+    with tabs[1]: local_question_bank("questions")
     with tabs[2]: practicals()
-    with tabs[3]: library()
+    with tabs[3]: student_library()
     with tabs[4]: v12_curriculum()
 
 def doctor_mode():
@@ -475,7 +587,7 @@ def doctor_mode():
     tabs=st.tabs(["🩻 X-ray AI","👄 Soft Tissue","📖 Clinical Library","📜 Case History"])
     with tabs[0]: xray()
     with tabs[1]: soft_tissue()
-    with tabs[2]: library()
+    with tabs[2]: doctor_library()
     with tabs[3]:
         st.markdown("### 📜 Saved Case History")
         email=st.text_input("Search patient email",key="history_email")
