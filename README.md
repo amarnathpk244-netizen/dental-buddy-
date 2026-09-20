@@ -1,77 +1,76 @@
-# Dental Buddy — PDF to SQLite Knowledge Base
+# Dental Buddy — PDF Knowledge Database
 
-## Folder structure
+## What this package does
+
+Drop your legally usable dental PDFs into the subject folders. The importer extracts page text, detects likely chapters/headings, creates searchable chunks, and stores everything in SQLite with FTS5.
+
+### Folder structure
+
+pdfs/
+- Oral_Medicine_Radiology/
+- Orthodontics/
+- Prosthodontics/
+- OMFS/
+- Pedodontics/
+- Periodontics/
+- Conservative_Endodontics/
+- Public_Health_Dentistry/
+- General/
+
+## 1. Install
+
+```bash
+pip install pypdf
+```
+
+## 2. Add PDFs
+
+Example:
 
 ```text
-Dental_Buddy_PDF_Importer/
-├── pdfs/
-│   ├── Oral_Medicine.pdf
-│   ├── Orthodontics.pdf
-│   └── Prosthodontics.pdf
-├── data/
-│   └── schema.sql
-├── scripts/
-│   ├── import_pdfs.py
-│   └── search_database.py
-└── output/
-    └── dental_buddy.db
+pdfs/Oral_Medicine_Radiology/Oral_Medicine_Textbook.pdf
+pdfs/Orthodontics/MBT.pdf
+pdfs/OMFS/OMFS_Textbook.pdf
 ```
 
-## Install
+Only use PDFs you are allowed to process/store in your application.
+
+## 3. Import everything
 
 ```bash
-pip install pymupdf
+python scripts/pdf_to_database.py
 ```
 
-Optional OCR for scanned PDFs:
+Or import one PDF:
 
 ```bash
-pip install pytesseract pillow
+python scripts/pdf_to_database.py --pdf "pdfs/OMFS/OMFS_Textbook.pdf"
 ```
 
-Tesseract OCR itself must also be installed on the computer if `--ocr` is used.
-
-## Import all PDFs
-
-Put your books in `pdfs/`, then:
-
-```bash
-python scripts/import_pdfs.py
-```
-
-For scanned/image-only books:
-
-```bash
-python scripts/import_pdfs.py --ocr
-```
-
-Import one book:
-
-```bash
-python scripts/import_pdfs.py --pdf "pdfs/Oral Medicine.pdf" --ocr
-```
-
-## Search
+## 4. Test search
 
 ```bash
 python scripts/search_database.py "lichen planus"
+python scripts/search_database.py "deep bite"
+python scripts/search_database.py "complete denture"
 ```
 
-## Database design
+## Database tables
 
-The database stores:
+- `documents` — PDF metadata
+- `pages` — page-level extracted text
+- `chapters` — detected chapter/section headings
+- `chunks` — RAG-ready text chunks with page references
+- `topics` — BDS topic index
+- `chunks_fts` — full-text search index
+- `pages_fts` — page full-text search index
 
-- books
-- every PDF page
-- detected chapters
-- detected topics/subtopics
-- MCQ/case/reference records
-- FTS5 full-text indexes
+## How Dental Buddy can use it
 
-Every extracted item retains a source PDF page so Dental Buddy can show where the information came from.
+Student asks a question → SQLite FTS search → retrieve relevant chunks → send only those chunks to the AI → generate an answer → display textbook name + page number.
 
-## Important
+This reduces unnecessary API calls and makes references traceable.
 
-This importer does not silently invent missing textbook content. If a scanned page cannot be read, it remains available as a source page and can be reprocessed with OCR.
+## Important limitation
 
-For high-quality textbook databases, review the automatically detected chapter/topic boundaries after import.
+PDF extraction is text-based. Scanned/image-only PDFs may need OCR before they can be searched accurately. Heading detection is heuristic, so it should be checked for each textbook.
