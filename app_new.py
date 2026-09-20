@@ -321,10 +321,10 @@ def local_search(query):
     c.close()
     return rows
 
-def local_study_hub():
+def local_study_hub(widget_key="main"):
     st.markdown("### 🔎 Local Study Search")
     st.caption("Searches only the Pocket Dentistry local study database — no Gemini/API call.")
-    query = st.text_input("Search topic, question or keyword", placeholder="e.g. DMFT, periodontal pocket, complete denture")
+    query = st.text_input("Search topic, question or keyword", placeholder="e.g. DMFT, periodontal pocket, complete denture", key=f"local_search_{widget_key}")
     if query.strip():
         results = local_search(query)
         st.caption(f"{len(results)} local result(s)")
@@ -450,10 +450,10 @@ def student_mode():
     st.markdown("## 🎓 Student Mode")
     if st.button("← Home",use_container_width=True): st.session_state.mode=None; st.rerun()
     tabs=st.tabs(["🔎 Local Study","📝 Local Questions","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
-    with tabs[0]: local_study_hub()
+    with tabs[0]: local_study_hub("study")
     with tabs[1]:
         st.markdown("### 📝 Local Question Bank")
-        local_study_hub()
+        local_study_hub("questions")
     with tabs[2]: practicals()
     with tabs[3]: library()
     with tabs[4]: v12_curriculum()
