@@ -302,7 +302,13 @@ def local_search(query):
     if not query.strip():
         return []
     c = local_db()
-    q = f"%{query.strip()}%"
+    raw = query.strip().lower()
+    alias = c.execute(
+        "SELECT topic FROM search_aliases WHERE lower(alias)=?",
+        (raw,)
+    ).fetchone()
+    effective = alias[0] if alias else query.strip()
+    q = f"%{effective}%"
     rows = c.execute("""
         SELECT 'Note' AS kind, n.title AS title, n.content AS body
         FROM notes n
@@ -315,9 +321,14 @@ def local_search(query):
         SELECT 'Viva', v.question, v.answer
         FROM viva v
         WHERE v.question LIKE ? OR v.answer LIKE ?
+        UNION ALL
+        SELECT 'Curriculum Topic', t.topic, 
+               'This topic is present in the local BDS curriculum. Detailed notes can be added to this topic.'
+        FROM topics t
+        WHERE t.topic LIKE ?
         ORDER BY title
         LIMIT 100
-    """, (q,q,q,q,q,q)).fetchall()
+    """, (q,q,q,q,q,q,q)).fetchall()
     c.close()
     return rows
 
@@ -333,6 +344,78 @@ def local_study_hub(widget_key="main"):
         for kind,title,body in results:
             with st.expander(f"📚 {kind}: {title}"):
                 st.markdown(body)
+
+
+
+def exam_ready_hub():
+    """API-free exam preparation hub backed entirely by SQLite."""
+    st.markdown("### 🎯 Exam-Ready BDS Hub")
+    st.caption("2-mark • 5-mark • 10-mark answers • MCQs • Viva — all from the local database, no Gemini/API call.")
+    c = local_db()
+    topic_rows = c.execute("""
+        SELECT DISTINCT t.id, t.topic
+        FROM topics t JOIN exam_answers e ON e.topic_id=t.id
+        ORDER BY t.topic
+    """).fetchall()
+    c.close()
+    if not topic_rows:
+        st.info("Exam-ready content has not been added yet.")
+        return
+
+    filter_text = st.text_input("Find a topic", placeholder="e.g. Ameloblastoma, OSMF, DMFT", key="exam_ready_search")
+    choices = topic_rows
+    if filter_text.strip():
+        ft = filter_text.strip().lower()
+        choices = [r for r in topic_rows if ft in r[1].lower()]
+    if not choices:
+        st.warning("No exam-ready topic matches this search.")
+        return
+
+    labels = [r[1] for r in choices]
+    selected = st.selectbox("Select topic", labels, key="exam_ready_topic")
+    topic_id = next(r[0] for r in choices if r[1] == selected)
+
+    c = local_db()
+    answers = c.execute("SELECT marks,title,content FROM exam_answers WHERE topic_id=? ORDER BY CASE marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '2-mark' THEN 3 ELSE 4 END", (topic_id,)).fetchall()
+    mcqs = c.execute("SELECT id,question,option_a,option_b,option_c,option_d,correct_option,explanation FROM mcqs WHERE topic_id=? ORDER BY id LIMIT 10", (topic_id,)).fetchall()
+    vivas = c.execute("SELECT question,answer FROM viva WHERE topic_id=? ORDER BY id LIMIT 10", (topic_id,)).fetchall()
+    c.close()
+
+    st.markdown(f"## 📚 {selected}")
+    atabs = st.tabs(["📝 10 Mark", "✍️ 5 Mark", "⚡ 2 Mark", "🧠 MCQ Quiz", "🎤 Viva"])
+    by_marks = {a[0]: a for a in answers}
+    with atabs[0]:
+        if '10-mark' in by_marks:
+            st.markdown(by_marks['10-mark'][2])
+            st.caption("Original study answer. Use your prescribed textbook/syllabus wording where required in university exams.")
+    with atabs[1]:
+        if '5-mark' in by_marks: st.markdown(by_marks['5-mark'][2])
+    with atabs[2]:
+        if '2-mark' in by_marks: st.markdown(by_marks['2-mark'][2])
+    with atabs[3]:
+        if not mcqs:
+            st.info("No MCQs for this topic yet.")
+        else:
+            score = 0
+            for i, row in enumerate(mcqs, 1):
+                qid, question, a, b, cc, d, correct, explanation = row
+                opts = {"A":a,"B":b,"C":cc,"D":d}
+                ans = st.radio(f"{i}. {question}", list(opts.keys()), format_func=lambda x, opts=opts: f"{x}. {opts[x]}", key=f"mcq_{topic_id}_{qid}")
+                if st.button(f"Check {i}", key=f"check_mcq_{topic_id}_{qid}"):
+                    if ans == correct:
+                        score += 1
+                        st.success("Correct ✅")
+                    else:
+                        st.error(f"Not quite. Correct answer: {correct}. {opts[correct]}")
+                    st.caption(explanation)
+            st.caption("Practice MCQs are generated study material, not verified previous-year questions.")
+    with atabs[4]:
+        if not vivas:
+            st.info("No viva prompts for this topic yet.")
+        else:
+            for i,(q,a) in enumerate(vivas,1):
+                with st.expander(f"{i}. {q}"):
+                    st.markdown(a)
 
 def local_subject_browser():
     c = local_db()
@@ -449,14 +532,15 @@ Provide problem representation, differential diagnoses, evidence ledger (support
 def student_mode():
     st.markdown("## 🎓 Student Mode")
     if st.button("← Home",use_container_width=True): st.session_state.mode=None; st.rerun()
-    tabs=st.tabs(["🔎 Local Study","📝 Local Questions","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
+    tabs=st.tabs(["🔎 Local Study","🎯 Exam Ready","📝 Local Questions","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
     with tabs[0]: local_study_hub("study")
-    with tabs[1]:
+    with tabs[1]: exam_ready_hub()
+    with tabs[2]:
         st.markdown("### 📝 Local Question Bank")
         local_study_hub("questions")
-    with tabs[2]: practicals()
-    with tabs[3]: library()
-    with tabs[4]: v12_curriculum()
+    with tabs[3]: practicals()
+    with tabs[4]: library()
+    with tabs[5]: v12_curriculum()
 
 def doctor_mode():
     st.markdown("## 🩺 Doctor Mode")
