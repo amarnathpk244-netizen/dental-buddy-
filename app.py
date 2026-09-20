@@ -237,7 +237,7 @@ def v12_curriculum():
         row=c.execute("""SELECT n.title,n.content FROM notes n JOIN topics t ON t.id=n.topic_id JOIN subjects s ON s.id=t.subject_id
             WHERE s.subject=? AND t.topic=? ORDER BY CASE WHEN n.title LIKE '%Complete Study Note%' THEN 0 ELSE 1 END,n.id LIMIT 1""",(subject,selected)).fetchone()
         answers=c.execute("""SELECT ea.marks,ea.title,ea.content FROM exam_answers ea JOIN topics t ON t.id=ea.topic_id JOIN subjects s ON s.id=t.subject_id
-            WHERE s.subject=? AND t.topic=? ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '2-mark' THEN 3 ELSE 4 END""",(subject,selected)).fetchall()
+            WHERE s.subject=? AND t.topic=? ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '3-mark' THEN 3 WHEN '2-mark' THEN 4 ELSE 5 END""",(subject,selected)).fetchall()
         c.close()
         if row:
             st.markdown(f"## 📖 {row[0]}")
@@ -330,7 +330,7 @@ def doctor_library():
 # ============================================================
 # LOCAL STUDY DATABASE — NO API
 # ============================================================
-LOCAL_DB = "study_database_India_V4_COMPLETE.db"
+LOCAL_DB = "study_database_India_V6_EXAM_RULES.db"
 
 def local_db():
     return sqlite3.connect(LOCAL_DB, check_same_thread=False)
@@ -367,7 +367,7 @@ def local_search(query):
 
 def local_study_hub(widget_key="main"):
     st.markdown("### 🔎 Local Study Search")
-    st.caption("India BDS V4 local database — no Gemini/API call. Full exam answers are included where available.")
+    st.caption("India BDS V6 local database — no Gemini/API call. Full exam answers are included where available.")
     query=st.text_input("Search topic, question or keyword",placeholder="e.g. Gingivitis, Ameloblastoma, DMFT",key=f"local_search_{widget_key}")
     if query.strip():
         results=local_search(query)
@@ -380,7 +380,7 @@ def local_study_hub(widget_key="main"):
 
 def local_question_bank(widget_key="questions"):
     st.markdown("### 📝 Local Question Bank")
-    st.caption("India BDS V4 question bank — local only. Exact duplicate questions are removed. Full 10/5/2-mark answers are shown when available.")
+    st.caption("India BDS V6 question bank — local only. Exact duplicate questions are removed. Full 10/5/3/2-mark answers are shown when available. 3-mark = 70–100 words; 5-mark = 150–180 words; 10-mark = >250 words.")
     query=st.text_input("Search question / topic",placeholder="e.g. Gingivitis, Ameloblastoma, DMFT",key=f"question_search_{widget_key}")
     if not query.strip():
         st.info("Search for a topic or question to open the stored answers.")
@@ -388,7 +388,7 @@ def local_question_bank(widget_key="questions"):
     c=local_db(); q=f"%{query.strip()}%"
     answer_rows=c.execute("""SELECT ea.marks,ea.title,ea.content FROM exam_answers ea
         WHERE ea.title LIKE ? OR ea.content LIKE ?
-        ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '2-mark' THEN 3 ELSE 4 END LIMIT 100""",(q,q)).fetchall()
+        ORDER BY CASE ea.marks WHEN '10-mark' THEN 1 WHEN '5-mark' THEN 2 WHEN '3-mark' THEN 3 WHEN '2-mark' THEN 4 ELSE 5 END LIMIT 100""",(q,q)).fetchall()
     question_rows=c.execute("""SELECT question,question_type,year,COALESCE(answer,'') FROM questions
         WHERE question LIKE ? OR COALESCE(answer,'') LIKE ? ORDER BY id DESC LIMIT 100""",(q,q)).fetchall()
     c.close()
