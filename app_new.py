@@ -3,8 +3,6 @@ import os, json, re, html, sqlite3, base64
 from datetime import date, datetime
 from io import BytesIO
 import streamlit as st
-from google import genai
-from google.genai import types
 
 st.set_page_config(page_title="Pocket Dentistry", page_icon="🦷", layout="centered", initial_sidebar_state="collapsed")
 
@@ -89,40 +87,68 @@ def get_api_key():
     return str(key or os.getenv("GEMINI_API_KEY","")).strip()
 
 def get_client():
-    key=get_api_key()
-    if not key: return None
-    try: return genai.Client(api_key=key)
-    except Exception: return None
+    """Gemini is loaded only for Doctor Mode AI requests."""
+    try:
+        from google import genai
+    except ImportError:
+        raise RuntimeError("google-genai is not installed. Run: pip install google-genai")
 
-def friendly_error(e):
-    t=str(e).upper()
-    if "401" in t or "UNAUTHENTICATED" in t:return "🔐 Gemini authentication failed. Check GEMINI_API_KEY."
-    if "403" in t or "PERMISSION_DENIED" in t:return "🚫 Gemini API permission denied."
-    if "404" in t or "NOT_FOUND" in t:return f"🔎 Gemini model `{MODEL_NAME}` was not found or is unavailable."
-    if "429" in t or "QUOTA" in t or "RESOURCE_EXHAUSTED" in t:return "⏳ Gemini quota/rate limit reached."
-    if "503" in t or "UNAVAILABLE" in t:return "🔄 Gemini is temporarily unavailable."
-    return "⚠️ AI service error. Please try again."
+    key = get_api_key()
+    if not key:
+        return None
+
+    try:
+        return genai.Client(api_key=key)
+    except Exception:
+        return None
+
 
 def run_text_ai(prompt):
-    c=get_client()
-    if c is None: raise RuntimeError("Gemini API key not found or client could not be created.")
-    r=c.models.generate_content(model=MODEL_NAME,contents=prompt)
-    text=getattr(r,"text",None)
-    if not text: raise RuntimeError("The AI returned an empty response.")
+    c = get_client()
+    if c is None:
+        raise RuntimeError("Gemini API key not found or client could not be created.")
+
+    r = c.models.generate_content(model=MODEL_NAME, contents=prompt)
+    text = getattr(r, "text", None)
+
+    if not text:
+        raise RuntimeError("The AI returned an empty response.")
+
     return text
 
-def run_image_analysis(uploaded,prompt):
-    c=get_client()
-    if c is None: raise RuntimeError("Gemini API key not found or client could not be created.")
-    part=types.Part.from_bytes(data=uploaded.getvalue(),mime_type=uploaded.type or "image/png")
-    r=c.models.generate_content(model=MODEL_NAME,contents=[prompt,part])
-    text=getattr(r,"text",None)
-    if not text: raise RuntimeError("The AI returned an empty response.")
+
+def run_image_analysis(uploaded, prompt):
+    try:
+        from google.genai import types
+    except ImportError:
+        raise RuntimeError("google-genai is not installed. Run: pip install google-genai")
+
+    c = get_client()
+    if c is None:
+        raise RuntimeError("Gemini API key not found or client could not be created.")
+
+    part = types.Part.from_bytes(
+        data=uploaded.getvalue(),
+        mime_type=uploaded.type or "image/png",
+    )
+
+    r = c.models.generate_content(
+        model=MODEL_NAME,
+        contents=[prompt, part],
+    )
+
+    text = getattr(r, "text", None)
+
+    if not text:
+        raise RuntimeError("The AI returned an empty response.")
+
     return text
 
-def show_ai_error(e,title="AI request failed"):
+
+def show_ai_error(e, title="AI request failed"):
     st.error(f"❌ {title}")
     st.markdown(friendly_error(e))
+
 
 # ============================================================
 # EXPORT
