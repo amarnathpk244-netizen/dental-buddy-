@@ -289,23 +289,81 @@ def library():
 # ============================================================
 # AI TUTOR / PYQ
 # ============================================================
-def student_ai():
-    topic=st.text_input("Topic",key="topic_tutor")
-    if st.button("📖 Teach Me",type="primary",use_container_width=True) and topic.strip():
-        try:
-            with st.spinner("Generating notes..."):
-                ans=run_text_ai(f"Teach {topic} for a dental student with definition, classification, features, diagnosis, management principles and viva questions.")
-            st.markdown(ans); show_export("Notes - "+topic,topic,ans,"Study Notes")
-        except Exception as e: show_ai_error(e)
 
-def pyq():
-    topic=st.text_input("Topic / Subject",key="pyq_topic")
-    if st.button("🔨 Generate Question Bank",type="primary",use_container_width=True) and topic.strip():
-        try:
-            with st.spinner("Compiling question bank..."):
-                ans=run_text_ai(f"Create a KUHS dental/medical examination question-bank layout for {topic}. Separate Long Essays, Short Notes, Viva and high-yield areas. Do not claim a question is a verified previous-year question unless evidence is provided.")
-            st.markdown(ans); show_export("KUHS Question Bank - "+topic,topic,ans,"Question Bank")
-        except Exception as e: show_ai_error(e)
+# ============================================================
+# LOCAL STUDY DATABASE — NO API
+# ============================================================
+LOCAL_DB = "study_database.db"
+
+def local_db():
+    return sqlite3.connect(LOCAL_DB, check_same_thread=False)
+
+def local_search(query):
+    if not query.strip():
+        return []
+    c = local_db()
+    q = f"%{query.strip()}%"
+    rows = c.execute("""
+        SELECT 'Note' AS kind, n.title AS title, n.content AS body
+        FROM notes n
+        WHERE n.title LIKE ? OR n.content LIKE ?
+        UNION ALL
+        SELECT q.question, q.question, COALESCE(q.answer,'')
+        FROM questions q
+        WHERE q.question LIKE ? OR COALESCE(q.answer,'') LIKE ?
+        UNION ALL
+        SELECT 'Viva', v.question, v.answer
+        FROM viva v
+        WHERE v.question LIKE ? OR v.answer LIKE ?
+        ORDER BY title
+        LIMIT 100
+    """, (q,q,q,q,q,q)).fetchall()
+    c.close()
+    return rows
+
+def local_study_hub():
+    st.markdown("### 🔎 Local Study Search")
+    st.caption("Searches only the Pocket Dentistry local study database — no Gemini/API call.")
+    query = st.text_input("Search topic, question or keyword", placeholder="e.g. DMFT, periodontal pocket, complete denture")
+    if query.strip():
+        results = local_search(query)
+        st.caption(f"{len(results)} local result(s)")
+        if not results:
+            st.info("No local content found for this search yet.")
+        for kind,title,body in results:
+            with st.expander(f"📚 {kind}: {title}"):
+                st.markdown(body)
+
+def local_subject_browser():
+    c = local_db()
+    years = [x[0] for x in c.execute("SELECT DISTINCT year FROM subjects ORDER BY id").fetchall()]
+    year = st.selectbox("Year", years, key="local_year")
+    subjects = [x[0] for x in c.execute("SELECT subject FROM subjects WHERE year=? ORDER BY subject",(year,)).fetchall()]
+    subject = st.selectbox("Subject", subjects, key="local_subject")
+    topics = [x[0] for x in c.execute("""
+        SELECT t.topic FROM topics t JOIN subjects s ON s.id=t.subject_id
+        WHERE s.year=? AND s.subject=? ORDER BY t.topic
+    """,(year,subject)).fetchall()]
+    topic = st.selectbox("Topic", topics, key="local_topic")
+    row = c.execute("""
+        SELECT n.title,n.content FROM notes n JOIN topics t ON t.id=n.topic_id
+        JOIN subjects s ON s.id=t.subject_id
+        WHERE s.year=? AND s.subject=? AND t.topic=?
+        ORDER BY n.id LIMIT 1
+    """,(year,subject,topic)).fetchone()
+    c.close()
+
+    st.markdown(f"### 📖 {topic}")
+    if row:
+        st.markdown(f"#### {row[0]}")
+        st.markdown(row[1])
+    else:
+        st.info("This topic is in the curriculum, but detailed local notes have not been added yet.")
+
+def student_ai():
+    # Kept as a compatibility wrapper, but it is deliberately API-free.
+    local_study_hub()
+
 
 # ============================================================
 # RADIOGRAPH AI
@@ -391,9 +449,11 @@ Provide problem representation, differential diagnoses, evidence ledger (support
 def student_mode():
     st.markdown("## 🎓 Student Mode")
     if st.button("← Home",use_container_width=True): st.session_state.mode=None; st.rerun()
-    tabs=st.tabs(["📚 Learn","📝 Exam / PYQ","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
-    with tabs[0]: student_ai()
-    with tabs[1]: pyq()
+    tabs=st.tabs(["🔎 Local Study","📝 Local Questions","🧪 Practicals","📖 Digital Library","🦷 V12 Curriculum"])
+    with tabs[0]: local_study_hub()
+    with tabs[1]:
+        st.markdown("### 📝 Local Question Bank")
+        local_study_hub()
     with tabs[2]: practicals()
     with tabs[3]: library()
     with tabs[4]: v12_curriculum()
